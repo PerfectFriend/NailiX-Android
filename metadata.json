@@ -1,0 +1,6 @@
+{
+  "name": "NailiX",
+  "description": "Premium manicure studio app with online booking, Instagram portfolio simulation, loyalty program, custom base designs with shape and length filters, referral tracking, and notification manager.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
