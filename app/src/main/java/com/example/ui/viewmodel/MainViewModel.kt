@@ -1847,6 +1847,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     )
 
     private var mediaPlayer: MediaPlayer? = null
+    private var isMediaPlayerPrepared = false
+    private var isMediaPlayerInError = false
+    private var radioSessionId = 0L
 
     private val _radioIsPlaying = MutableStateFlow(false)
     val radioIsPlaying: StateFlow<Boolean> = _radioIsPlaying.asStateFlow()
@@ -1862,73 +1865,136 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _radioError = MutableStateFlow<String?>(null)
     val radioError: StateFlow<String?> = _radioError.asStateFlow()
 
+    private fun releaseMediaPlayer() {
+        val currentMp = mediaPlayer ?: return
+        val canStop = isMediaPlayerPrepared && !isMediaPlayerInError
+        mediaPlayer = null
+        isMediaPlayerPrepared = false
+        isMediaPlayerInError = false
+
+        runCatching {
+            currentMp.setOnPreparedListener(null)
+            currentMp.setOnErrorListener(null)
+            currentMp.setOnCompletionListener(null)
+            if (canStop) {
+                if (currentMp.isPlaying) {
+                    currentMp.pause()
+                }
+                currentMp.stop()
+            }
+        }
+        runCatching {
+            currentMp.release()
+        }
+    }
+
     fun playRadioStation(station: RadioStation) {
+        val sessionId = ++radioSessionId
         viewModelScope.launch {
+            var newMp: MediaPlayer? = null
             try {
                 _radioError.value = null
                 _selectedStation.value = station
                 _radioIsLoading.value = true
                 _radioIsPlaying.value = false
 
-                // Stop and release previous session
-                mediaPlayer?.stop()
-                mediaPlayer?.release()
-                mediaPlayer = null
+                // Safely release any previous session without calling stop() in PREPARING/IDLE/ERROR states
+                releaseMediaPlayer()
 
-                val mp = MediaPlayer().apply {
-                    setAudioAttributes(
-                        AudioAttributes.Builder()
-                            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                            .setUsage(AudioAttributes.USAGE_MEDIA)
-                            .build()
-                    )
-                    setDataSource(station.url)
+                val mp = MediaPlayer()
+                newMp = mp
+                mp.setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .build()
+                )
+                mp.setDataSource(station.url)
+
+                if (sessionId != radioSessionId) {
+                    runCatching { mp.release() }
+                    return@launch
                 }
+
+                isMediaPlayerPrepared = false
+                isMediaPlayerInError = false
                 mediaPlayer = mp
 
                 mp.setOnPreparedListener { preparedMp ->
-                    if (mediaPlayer == preparedMp) {
+                    if (mediaPlayer == preparedMp && sessionId == radioSessionId) {
+                        isMediaPlayerPrepared = true
+                        isMediaPlayerInError = false
                         _radioIsLoading.value = false
                         _radioIsPlaying.value = true
-                        preparedMp.start()
+                        runCatching {
+                            preparedMp.start()
+                        }.onFailure { e ->
+                            isMediaPlayerPrepared = false
+                            isMediaPlayerInError = true
+                            _radioIsPlaying.value = false
+                            _radioError.value = e.localizedMessage ?: "Ошибка запуска радио"
+                            releaseMediaPlayer()
+                        }
                     } else {
-                        preparedMp.release()
+                        runCatching { preparedMp.release() }
                     }
                 }
 
-                mp.setOnErrorListener { preparedMp, what, extra ->
-                    if (mediaPlayer == preparedMp) {
+                mp.setOnErrorListener { failedMp, what, extra ->
+                    if (mediaPlayer == failedMp && sessionId == radioSessionId) {
+                        isMediaPlayerPrepared = false
+                        isMediaPlayerInError = true
                         _radioIsLoading.value = false
                         _radioIsPlaying.value = false
                         _radioError.value = "Ошибка стрима ($what, $extra)"
+                        releaseMediaPlayer()
                     } else {
-                        preparedMp.release()
+                        runCatching { failedMp.release() }
                     }
                     true
                 }
 
+                mp.setOnCompletionListener { completedMp ->
+                    if (mediaPlayer == completedMp && sessionId == radioSessionId) {
+                        _radioIsPlaying.value = false
+                    }
+                }
+
                 mp.prepareAsync()
             } catch (e: Exception) {
-                _radioIsLoading.value = false
-                _radioIsPlaying.value = false
-                _radioError.value = e.localizedMessage ?: "Ошибка подключения к радио"
+                if (sessionId == radioSessionId) {
+                    releaseMediaPlayer()
+                    _radioIsLoading.value = false
+                    _radioIsPlaying.value = false
+                    _radioError.value = e.localizedMessage ?: "Ошибка подключения к радио"
+                } else {
+                    runCatching { newMp?.release() }
+                }
             }
         }
     }
 
     fun toggleRadioPlayback() {
         val current = _selectedStation.value ?: return
-        if (_radioIsPlaying.value) {
-            pauseRadio()
-        } else {
-            playRadioStation(current)
+        when {
+            _radioIsLoading.value -> stopRadio()
+            _radioIsPlaying.value -> pauseRadio()
+            isMediaPlayerPrepared && !isMediaPlayerInError && mediaPlayer != null -> {
+                runCatching {
+                    mediaPlayer?.start()
+                    _radioIsPlaying.value = true
+                }.onFailure {
+                    playRadioStation(current)
+                }
+            }
+            else -> playRadioStation(current)
         }
     }
 
     fun pauseRadio() {
         try {
             mediaPlayer?.let { mp ->
-                if (mp.isPlaying) {
+                if (isMediaPlayerPrepared && !isMediaPlayerInError && mp.isPlaying) {
                     mp.pause()
                 }
             }
@@ -1939,15 +2005,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun stopRadio() {
-        try {
-            mediaPlayer?.stop()
-            mediaPlayer?.release()
-            mediaPlayer = null
-            _radioIsPlaying.value = false
-            _radioIsLoading.value = false
-        } catch (e: Exception) {
-            // ignore cleanup errors
-        }
+        radioSessionId++
+        releaseMediaPlayer()
+        _radioIsPlaying.value = false
+        _radioIsLoading.value = false
     }
 
     fun playRandomStation() {

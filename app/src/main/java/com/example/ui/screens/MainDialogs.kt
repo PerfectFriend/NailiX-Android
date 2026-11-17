@@ -2114,9 +2114,14 @@ fun RadioSelectorDialog(
                                     }
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        text = if (radioIsPlaying) "Остановить" else "Включить",
+                                        text = when {
+                                            radioIsPlaying -> "Остановить"
+                                            radioIsLoading -> "Отмена"
+                                            else -> "Включить"
+                                        },
                                         fontWeight = FontWeight.Bold,
-                                        fontSize = 14.sp
+                                        fontSize = 14.sp,
+                                        maxLines = 1
                                     )
                                 }
 
