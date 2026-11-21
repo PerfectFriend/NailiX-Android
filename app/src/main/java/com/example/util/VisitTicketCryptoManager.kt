@@ -3,15 +3,15 @@ package com.example.util
 import android.graphics.Bitmap
 import android.graphics.Color as AndroidColor
 import com.example.data.Booking
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.EncodeHintType
+import com.google.zxing.qrcode.QRCodeWriter
+import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
 import org.json.JSONObject
 import java.security.MessageDigest
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 /**
- * Криптографический токен визита и генератор QR-кода без внешних тяжелых зависимостей.
- * Генерирует детерминированный QR матрикс (битмап) и подписывает SHA-256 HMAC-подобным дайджестом.
+ * Криптографический токен визита и генератор стандартного ISO/IEC 18004 QR-кода (ZXing).
  */
 data class VisitQrTicket(
     val bookingId: Int,
@@ -70,7 +70,7 @@ object VisitTicketCryptoManager {
     }
 
     fun verifyAndParsePayload(payload: String): Pair<Boolean, JSONObject?> {
-        try {
+        return try {
             if (!payload.startsWith("NAILIX://CHECKIN?data=")) return Pair(false, null)
             val base64Data = payload.removePrefix("NAILIX://CHECKIN?data=")
             val jsonStr = String(android.util.Base64.decode(base64Data, android.util.Base64.NO_WRAP), Charsets.UTF_8)
@@ -82,7 +82,7 @@ object VisitTicketCryptoManager {
             val price = json.optDouble("pr", 0.0)
             val token = json.optString("tok", "")
 
-            val mockBooking = Booking(
+            val candidateBooking = Booking(
                 id = id,
                 serviceName = json.optString("s", ""),
                 serviceCategory = "Manicure",
@@ -93,82 +93,41 @@ object VisitTicketCryptoManager {
                 clientName = json.optString("n", ""),
                 clientPhone = phone
             )
-            val expectedToken = generateSecurityToken(mockBooking)
+            val expectedToken = generateSecurityToken(candidateBooking)
             val isValid = token.equals(expectedToken, ignoreCase = true)
-            return Pair(isValid, json)
-        } catch (e: Exception) {
-            return Pair(false, null)
+            Pair(isValid, json)
+        } catch (_: Exception) {
+            Pair(false, null)
         }
     }
 
     /**
-     * Создает визуальную матрицу QR-кода на чистом Canvas/Bitmap без сторонних библиотек.
-     * Использует псевдо-QR сетку 25x25 со стандартными поисковыми маркерами по углам и битами хеша.
+     * Генерирует стандартный сканируемый QR-код ISO/IEC 18004 через ZXing QRCodeWriter.
      */
     fun generateQrBitmap(content: String, size: Int = 512): Bitmap {
-        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-        val matrixSize = 25
-        val cellSize = size / matrixSize
-
-        val md = MessageDigest.getInstance("SHA-256")
-        val hash = md.digest(content.toByteArray(Charsets.UTF_8))
-
-        // Заливаем фон
-        for (x in 0 until size) {
-            for (y in 0 until size) {
-                bitmap.setPixel(x, y, AndroidColor.WHITE)
+        val hints = mapOf(
+            EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.M,
+            EncodeHintType.MARGIN to 2,
+            EncodeHintType.CHARACTER_SET to "UTF-8"
+        )
+        val bitMatrix = QRCodeWriter().encode(
+            content.ifBlank { "NAILIX" },
+            BarcodeFormat.QR_CODE,
+            size,
+            size,
+            hints
+        )
+        val width = bitMatrix.width
+        val height = bitMatrix.height
+        val pixels = IntArray(width * height)
+        for (y in 0 until height) {
+            val offset = y * width
+            for (x in 0 until width) {
+                pixels[offset + x] = if (bitMatrix[x, y]) AndroidColor.BLACK else AndroidColor.WHITE
             }
         }
-
-        fun drawCornerFinder(startX: Int, startY: Int) {
-            for (r in 0 until 7) {
-                for (c in 0 until 7) {
-                    val isBorder = r == 0 || r == 6 || c == 0 || c == 6
-                    val isCenter = r in 2..4 && c in 2..4
-                    val color = if (isBorder || isCenter) AndroidColor.BLACK else AndroidColor.WHITE
-                    val px = (startX + c) * cellSize
-                    val py = (startY + r) * cellSize
-                    for (ix in 0 until cellSize) {
-                        for (iy in 0 until cellSize) {
-                            if (px + ix < size && py + iy < size) {
-                                bitmap.setPixel(px + ix, py + iy, color)
-                            }
-                        }
-                    }
-                }
-            }
+        return Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).apply {
+            setPixels(pixels, 0, width, 0, 0, width, height)
         }
-
-        // 3 позиционных угловых квадрата
-        drawCornerFinder(1, 1)
-        drawCornerFinder(matrixSize - 8, 1)
-        drawCornerFinder(1, matrixSize - 8)
-
-        // Данные на основе хеша контента
-        for (r in 1 until matrixSize - 1) {
-            for (c in 1 until matrixSize - 1) {
-                val inTopLeft = r in 1..7 && c in 1..7
-                val inTopRight = r in 1..7 && c in (matrixSize - 8)..matrixSize
-                val inBottomLeft = r in (matrixSize - 8)..matrixSize && c in 1..7
-                if (inTopLeft || inTopRight || inBottomLeft) continue
-
-                val hashIndex = ((r * matrixSize + c) % hash.size)
-                val bitIndex = (r + c) % 8
-                val isBlack = ((hash[hashIndex].toInt() shr bitIndex) and 1) == 1
-
-                val color = if (isBlack) AndroidColor.BLACK else AndroidColor.WHITE
-                val px = c * cellSize
-                val py = r * cellSize
-                for (ix in 0 until cellSize) {
-                    for (iy in 0 until cellSize) {
-                        if (px + ix < size && py + iy < size) {
-                            bitmap.setPixel(px + ix, py + iy, color)
-                        }
-                    }
-                }
-            }
-        }
-
-        return bitmap
     }
 }

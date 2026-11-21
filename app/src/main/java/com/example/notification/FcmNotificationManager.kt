@@ -10,17 +10,20 @@ import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.work.Configuration
+import androidx.work.CoroutineWorker
+import androidx.work.Data
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
+import androidx.work.WorkerParameters
 import com.example.MainActivity
 import com.example.R
 import com.google.firebase.FirebaseApp
-import com.google.firebase.FirebaseOptions
 import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import java.util.concurrent.TimeUnit
 
 data class FcmNotificationItem(
     val id: String = System.currentTimeMillis().toString(),
@@ -31,33 +34,43 @@ data class FcmNotificationItem(
     val data: Map<String, String> = emptyMap()
 )
 
+class BookingReminderWorker(
+    appContext: Context,
+    params: WorkerParameters
+) : CoroutineWorker(appContext, params) {
+    override suspend fun doWork(): Result {
+        val title = inputData.getString(KEY_TITLE) ?: "Напоминание о визите NailiX 💅"
+        val body = inputData.getString(KEY_BODY) ?: "Скоро ваш визит в студию NailiX!"
+        val type = inputData.getString(KEY_TYPE) ?: "appointment_reminder"
+        FcmNotificationManager.showSystemNotification(
+            context = applicationContext,
+            title = title,
+            body = body,
+            type = type
+        )
+        return Result.success()
+    }
+
+    companion object {
+        const val KEY_TITLE = "reminder_title"
+        const val KEY_BODY = "reminder_body"
+        const val KEY_TYPE = "reminder_type"
+    }
+}
+
 object FcmNotificationManager {
     private const val TAG = "FcmNotificationManager"
 
     const val CHANNEL_REMINDERS_ID = "nailix_reminders_channel"
     const val CHANNEL_PROMOTIONS_ID = "nailix_promotions_channel"
 
-    private val _fcmToken = MutableStateFlow("fcm_token_pending...")
+    private val _fcmToken = MutableStateFlow("Ожидание токена FCM...")
     val fcmToken: StateFlow<String> = _fcmToken.asStateFlow()
 
-    private val _notifications = MutableStateFlow<List<FcmNotificationItem>>(
-        listOf(
-            FcmNotificationItem(
-                title = "Напоминание о записи 💅",
-                body = "Ждем вас завтра в 14:00 на аппаратный маникюр с укреплением! Мастер: Виктория",
-                type = "appointment_reminder",
-                timestamp = System.currentTimeMillis() - 1000 * 60 * 60 * 2,
-                data = mapOf("date" to "Завтра", "time" to "14:00", "service" to "Аппаратный маникюр")
-            ),
-            FcmNotificationItem(
-                title = "Горячая акция студии 🎁",
-                body = "Скидка -20% на спа-педикюр и дизайн ногтей до конца недели по промокоду NAIL20!",
-                type = "promotion",
-                timestamp = System.currentTimeMillis() - 1000 * 60 * 60 * 24,
-                data = mapOf("promoCode" to "NAIL20", "discount" to "20%")
-            )
-        )
-    )
+    private val _fcmError = MutableStateFlow<String?>(null)
+    val fcmError: StateFlow<String?> = _fcmError.asStateFlow()
+
+    private val _notifications = MutableStateFlow<List<FcmNotificationItem>>(emptyList())
     val notifications: StateFlow<List<FcmNotificationItem>> = _notifications.asStateFlow()
 
     fun init(context: Context) {
@@ -69,16 +82,10 @@ object FcmNotificationManager {
     private fun ensureFirebaseInitialized(context: Context) {
         try {
             if (FirebaseApp.getApps(context).isEmpty()) {
-                val options = FirebaseOptions.Builder()
-                    .setApplicationId(context.packageName)
-                    .setProjectId("nailix-studio")
-                    .setApiKey("AIzaSyD_DummyClientKeyForLocalNotificationsInit")
-                    .build()
-                FirebaseApp.initializeApp(context.applicationContext, options)
-                Log.d(TAG, "FirebaseApp initialized gracefully")
+                FirebaseApp.initializeApp(context.applicationContext)
             }
         } catch (e: Throwable) {
-            Log.d(TAG, "FirebaseApp init status: ${e.message}")
+            Log.w(TAG, "FirebaseApp initialization note: ${e.message}")
         }
     }
 
@@ -112,6 +119,7 @@ object FcmNotificationManager {
 
     fun updateToken(token: String) {
         _fcmToken.value = token
+        _fcmError.value = null
         Log.d(TAG, "FCM Token updated: $token")
     }
 
@@ -119,27 +127,53 @@ object FcmNotificationManager {
         try {
             if (FirebaseApp.getApps(context).isNotEmpty()) {
                 FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
-                    if (task.isSuccessful && task.result != null) {
-                        val token = task.result
-                        _fcmToken.value = token
-                        Log.d(TAG, "Fetched FCM Token: $token")
+                    if (task.isSuccessful && !task.result.isNullOrBlank()) {
+                        _fcmToken.value = task.result
+                        _fcmError.value = null
+                        Log.d(TAG, "Fetched real FCM Token")
                     } else {
-                        Log.d(TAG, "Fetching FCM registration token note: ${task.exception?.message}")
-                        if (_fcmToken.value.startsWith("fcm_token_pending")) {
-                            _fcmToken.value = "fcm_live_device_token_" + java.util.UUID.randomUUID().toString().take(12)
-                        }
+                        val reason = task.exception?.localizedMessage ?: "FCM сервис недоступен (возможно, нет Google Play Services)"
+                        _fcmToken.value = "FCM недоступен"
+                        _fcmError.value = reason
+                        Log.w(TAG, "FCM token unavailable: $reason")
                     }
                 }
             } else {
-                if (_fcmToken.value.startsWith("fcm_token_pending")) {
-                    _fcmToken.value = "fcm_device_token_" + java.util.UUID.randomUUID().toString().take(12)
-                }
+                _fcmToken.value = "FirebaseApp не инициализирован"
+                _fcmError.value = "Отсутствует google-services.json конфигурация"
             }
         } catch (e: Throwable) {
-            Log.d(TAG, "FCM Token retrieval note: ${e.message}")
-            if (_fcmToken.value.startsWith("fcm_token_pending")) {
-                _fcmToken.value = "fcm_device_token_" + java.util.UUID.randomUUID().toString().take(12)
+            _fcmToken.value = "FCM недоступен"
+            _fcmError.value = e.localizedMessage
+            Log.w(TAG, "FCM token error: ${e.message}")
+        }
+    }
+
+    fun scheduleBookingReminder(
+        context: Context,
+        title: String,
+        body: String,
+        delayMinutes: Long
+    ) {
+        val input = Data.Builder()
+            .putString(BookingReminderWorker.KEY_TITLE, title)
+            .putString(BookingReminderWorker.KEY_BODY, body)
+            .putString(BookingReminderWorker.KEY_TYPE, "appointment_reminder")
+            .build()
+
+        val request = OneTimeWorkRequestBuilder<BookingReminderWorker>()
+            .setInitialDelay(delayMinutes.coerceAtLeast(0L), TimeUnit.MINUTES)
+            .setInputData(input)
+            .build()
+
+        runCatching {
+            val appCtx = context.applicationContext
+            if (!WorkManager.isInitialized()) {
+                WorkManager.initialize(appCtx, Configuration.Builder().build())
             }
+            WorkManager.getInstance(appCtx).enqueue(request)
+        }.onFailure { e ->
+            Log.w(TAG, "Unable to schedule WorkManager booking reminder: ${e.message}")
         }
     }
 
@@ -154,6 +188,7 @@ object FcmNotificationManager {
         type: String = "general",
         data: Map<String, String> = emptyMap()
     ) {
+        createNotificationChannels(context)
         val channelId = if (type == "appointment_reminder") CHANNEL_REMINDERS_ID else CHANNEL_PROMOTIONS_ID
 
         val intent = Intent(context, MainActivity::class.java).apply {
@@ -164,7 +199,7 @@ object FcmNotificationManager {
 
         val pendingIntent = PendingIntent.getActivity(
             context,
-            (0..99999).random(),
+            (System.currentTimeMillis() and 0xFFFFFF).toInt(),
             intent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
@@ -183,7 +218,7 @@ object FcmNotificationManager {
 
         try {
             val notificationManager = NotificationManagerCompat.from(context)
-            val notifId = (1000..99999).random()
+            val notifId = (System.currentTimeMillis() and 0x7FFFFFFF).toInt()
             notificationManager.notify(notifId, builder.build())
         } catch (e: SecurityException) {
             Log.w(TAG, "POST_NOTIFICATIONS permission not granted: ${e.message}")

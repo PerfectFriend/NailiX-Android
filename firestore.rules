@@ -1,0 +1,381 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Core Primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidTimestamp(ts) {
+      return ts is timestamp && ts <= request.time;
+    }
+
+    function isValidOptionalString(data, key, maxLen) {
+      return !(key in data) || (data[key] is string && data[key].size() <= maxLen);
+    }
+
+    // Entity Validators
+    function isValidUserProfile(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80 &&
+             data.role is string && data.role in ['client', 'master'] &&
+             data.referralCode is string && data.referralCode.size() >= 6 && data.referralCode.size() <= 24 &&
+             data.loyaltyPoints is int && data.loyaltyPoints >= 0 && data.loyaltyPoints <= 1000000 &&
+             data.loyaltyLevel is string && data.loyaltyLevel in ['Silver', 'Gold', 'Platinum'] &&
+             data.friendsReferred is int && data.friendsReferred >= 0 && data.friendsReferred <= 100000 &&
+             isValidOptionalString(data, 'homeAddress', 200) &&
+             isValidOptionalString(data, 'workAddress', 200) &&
+             isValidOptionalString(data, 'phone', 40) &&
+             isValidOptionalString(data, 'email', 120) &&
+             isValidOptionalString(data, 'preferredSkin', 30) &&
+             isValidOptionalString(data, 'preferredCurrency', 5) &&
+             isValidOptionalString(data, 'preferredLanguage', 5) &&
+             isValidOptionalString(data, 'fcmToken', 512) &&
+             isValidOptionalString(data, 'claimedReferralCode', 24) &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidLoyaltyTransaction(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.title is string && data.title.size() >= 1 && data.title.size() <= 140 &&
+             data.points is int && data.points >= -50000 && data.points <= 50000 &&
+             isValidTimestamp(data.createdAt);
+    }
+
+    function isValidMasterProfile(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.visibility == 'public' &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 80 &&
+             data.address is string && data.address.size() >= 1 && data.address.size() <= 200 &&
+             data.workingSchedule is string && data.workingSchedule.size() >= 1 && data.workingSchedule.size() <= 100 &&
+             data.experienceYears is int && data.experienceYears >= 0 && data.experienceYears <= 70 &&
+             data.languages is list && data.languages.size() <= 10 &&
+             (data.languages.size() == 0 || (data.languages[0] is string && data.languages[0].size() <= 40)) &&
+             data.instagramUsername is string && data.instagramUsername.size() <= 60 &&
+             data.currency is string && data.currency.size() >= 3 && data.currency.size() <= 5 &&
+             data.ratingAvg is number && data.ratingAvg >= 1.0 && data.ratingAvg <= 5.0 &&
+             data.ratingCount is int && data.ratingCount >= 0 && data.ratingCount <= 1000000 &&
+             (!('lat' in data) || (data.lat is number && data.lat >= -90.0 && data.lat <= 90.0)) &&
+             (!('lon' in data) || (data.lon is number && data.lon >= -180.0 && data.lon <= 180.0)) &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidService(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.visibility == 'public' &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
+             data.category is string && data.category.size() >= 1 && data.category.size() <= 50 &&
+             data.price is number && data.price >= 0.0 && data.price <= 1000000.0 &&
+             data.durationMin is int && data.durationMin >= 5 && data.durationMin <= 480 &&
+             data.description is string && data.description.size() <= 500 &&
+             isValidOptionalString(data, 'imageUrl', 500) &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidBooking(data) {
+      return data.clientUid is string && data.clientUid.size() >= 1 && data.clientUid.size() <= 128 &&
+             isValidOptionalString(data, 'masterUid', 128) &&
+             data.serviceName is string && data.serviceName.size() >= 1 && data.serviceName.size() <= 120 &&
+             data.serviceCategory is string && data.serviceCategory.size() >= 1 && data.serviceCategory.size() <= 60 &&
+             data.date is string && data.date.size() >= 1 && data.date.size() <= 40 &&
+             data.timeSlot is string && data.timeSlot.size() >= 1 && data.timeSlot.size() <= 20 &&
+             data.masterName is string && data.masterName.size() >= 1 && data.masterName.size() <= 100 &&
+             data.price is number && data.price >= 0.0 && data.price <= 1000000.0 &&
+             data.clientName is string && data.clientName.size() >= 1 && data.clientName.size() <= 100 &&
+             data.clientPhone is string && data.clientPhone.size() >= 1 && data.clientPhone.size() <= 40 &&
+             data.paymentMethod is string && data.paymentMethod in ['studio_visit', 'studio_transfer'] &&
+             data.status is string && data.status in ['Подтверждена', 'Выполнена', 'Отменена'] &&
+             data.ticketToken is string && data.ticketToken.size() >= 8 && data.ticketToken.size() <= 64 &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidNailArt(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.visibility == 'public' &&
+             data.title is string && data.title.size() >= 1 && data.title.size() <= 100 &&
+             data.masterName is string && data.masterName.size() >= 1 && data.masterName.size() <= 80 &&
+             data.complexity is string && data.complexity.size() >= 1 && data.complexity.size() <= 30 &&
+             data.extraPrice is number && data.extraPrice >= 0.0 && data.extraPrice <= 100000.0 &&
+             data.imageUrl is string && data.imageUrl.size() <= 500 &&
+             data.likes is int && data.likes >= 0 && data.likes <= 10000000 &&
+             data.views is int && data.views >= 0 && data.views <= 100000000 &&
+             data.description is string && data.description.size() <= 600 &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidReview(data) {
+      return data.authorUid is string && data.authorUid.size() >= 1 && data.authorUid.size() <= 128 &&
+             data.visibility == 'public' &&
+             data.targetId is string && data.targetId.size() >= 1 && data.targetId.size() <= 128 &&
+             data.targetType is string && data.targetType in ['master', 'client'] &&
+             data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 80 &&
+             data.rating is int && data.rating >= 1 && data.rating <= 5 &&
+             data.comment is string && data.comment.size() >= 1 && data.comment.size() <= 500 &&
+             data.dateStr is string && data.dateStr.size() >= 1 && data.dateStr.size() <= 30 &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidReferralCode(data) {
+      return data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128 &&
+             data.ownerName is string && data.ownerName.size() >= 1 && data.ownerName.size() <= 80 &&
+             data.redemptionCount is int && data.redemptionCount >= 0 && data.redemptionCount <= 100000 &&
+             isValidOptionalString(data, 'lastRedeemedBy', 128) &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidReferralRedemption(data) {
+      return data.claimerUid is string && data.claimerUid.size() >= 1 && data.claimerUid.size() <= 128 &&
+             data.claimerName is string && data.claimerName.size() >= 1 && data.claimerName.size() <= 80 &&
+             data.code is string && data.code.size() >= 6 && data.code.size() <= 24 &&
+             isValidTimestamp(data.createdAt);
+    }
+
+    // 1. User Profiles & Owner Loyalty Ledger
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+      allow list: if false;
+
+      allow create: if isSignedIn() &&
+                       isValidId(userId) &&
+                       request.auth.uid == userId &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().keys().hasAll(['userId', 'displayName', 'role', 'referralCode', 'loyaltyPoints', 'loyaltyLevel', 'friendsReferred', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'displayName', 'role', 'referralCode', 'loyaltyPoints', 'loyaltyLevel', 'friendsReferred', 'homeAddress', 'workAddress', 'phone', 'email', 'preferredSkin', 'preferredCurrency', 'preferredLanguage', 'fcmToken', 'claimedReferralCode', 'createdAt', 'updatedAt']) &&
+                       isValidUserProfile(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(userId) &&
+                       request.auth.uid == userId &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().referralCode == existing().referralCode &&
+                       isValidUserProfile(incoming()) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'role', 'loyaltyPoints', 'loyaltyLevel', 'friendsReferred', 'homeAddress', 'workAddress', 'phone', 'email', 'preferredSkin', 'preferredCurrency', 'preferredLanguage', 'fcmToken', 'claimedReferralCode', 'updatedAt']);
+
+      allow delete: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+
+      match /loyalty_transactions/{txId} {
+        allow get: if isSignedIn() && isValidId(userId) && isValidId(txId) && request.auth.uid == userId;
+        allow list: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+
+        allow create: if isSignedIn() &&
+                         isValidId(userId) &&
+                         isValidId(txId) &&
+                         request.auth.uid == userId &&
+                         incoming().userId == request.auth.uid &&
+                         incoming().keys().hasAll(['userId', 'title', 'points', 'createdAt']) &&
+                         incoming().keys().hasOnly(['userId', 'title', 'points', 'createdAt']) &&
+                         isValidLoyaltyTransaction(incoming());
+
+        allow update: if false;
+        allow delete: if isSignedIn() && isValidId(userId) && isValidId(txId) && request.auth.uid == userId;
+      }
+    }
+
+    // 2. Public Studio / Master Profiles
+    match /masters/{masterId} {
+      allow get: if isSignedIn() && isValidId(masterId) && (existing().visibility == 'public' || existing().userId == request.auth.uid);
+      allow list: if isSignedIn() && (existing().visibility == 'public' || existing().userId == request.auth.uid);
+
+      allow create: if isSignedIn() &&
+                       isValidId(masterId) &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().keys().hasAll(['userId', 'visibility', 'name', 'address', 'workingSchedule', 'experienceYears', 'languages', 'instagramUsername', 'currency', 'ratingAvg', 'ratingCount', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'visibility', 'name', 'address', 'workingSchedule', 'experienceYears', 'languages', 'instagramUsername', 'currency', 'ratingAvg', 'ratingCount', 'lat', 'lon', 'createdAt', 'updatedAt']) &&
+                       isValidMasterProfile(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(masterId) &&
+                       existing().userId == request.auth.uid &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       isValidMasterProfile(incoming()) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['name', 'address', 'workingSchedule', 'experienceYears', 'languages', 'instagramUsername', 'currency', 'ratingAvg', 'ratingCount', 'lat', 'lon', 'updatedAt']);
+
+      allow delete: if isSignedIn() && isValidId(masterId) && existing().userId == request.auth.uid;
+    }
+
+    // 3. Shared Services Catalog
+    match /services/{serviceId} {
+      allow get: if isSignedIn() && isValidId(serviceId) && (existing().visibility == 'public' || existing().userId == request.auth.uid);
+      allow list: if isSignedIn() && (existing().visibility == 'public' || existing().userId == request.auth.uid);
+
+      allow create: if isSignedIn() &&
+                       isValidId(serviceId) &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().keys().hasAll(['userId', 'visibility', 'name', 'category', 'price', 'durationMin', 'description', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'visibility', 'name', 'category', 'price', 'durationMin', 'description', 'imageUrl', 'createdAt', 'updatedAt']) &&
+                       isValidService(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(serviceId) &&
+                       existing().userId == request.auth.uid &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       isValidService(incoming()) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['name', 'category', 'price', 'durationMin', 'description', 'imageUrl', 'updatedAt']);
+
+      allow delete: if isSignedIn() && isValidId(serviceId) && existing().userId == request.auth.uid;
+    }
+
+    // 4. Appointments / Bookings (Strictly clientUid / masterUid isolated + Terminal State Lock)
+    match /bookings/{bookingId} {
+      allow get: if isSignedIn() && isValidId(bookingId) && (existing().clientUid == request.auth.uid || (('masterUid' in existing()) && existing().masterUid == request.auth.uid));
+      allow list: if isSignedIn() && (existing().clientUid == request.auth.uid || (('masterUid' in existing()) && existing().masterUid == request.auth.uid));
+
+      allow create: if isSignedIn() &&
+                       isValidId(bookingId) &&
+                       incoming().clientUid == request.auth.uid &&
+                       incoming().status == 'Подтверждена' &&
+                       incoming().keys().hasAll(['clientUid', 'serviceName', 'serviceCategory', 'date', 'timeSlot', 'masterName', 'price', 'clientName', 'clientPhone', 'paymentMethod', 'status', 'ticketToken', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['clientUid', 'masterUid', 'serviceName', 'serviceCategory', 'date', 'timeSlot', 'masterName', 'price', 'clientName', 'clientPhone', 'paymentMethod', 'status', 'ticketToken', 'createdAt', 'updatedAt']) &&
+                       isValidBooking(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(bookingId) &&
+                       (existing().clientUid == request.auth.uid || (('masterUid' in existing()) && existing().masterUid == request.auth.uid)) &&
+                       existing().status == 'Подтверждена' &&
+                       incoming().clientUid == existing().clientUid &&
+                       incoming().createdAt == existing().createdAt &&
+                       isValidBooking(incoming()) &&
+                       (
+                         (incoming().status == 'Подтверждена' && incoming().diff(existing()).affectedKeys().hasOnly(['date', 'timeSlot', 'updatedAt'])) ||
+                         (existing().clientUid == request.auth.uid && incoming().status == 'Отменена' && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])) ||
+                         (('masterUid' in existing()) && existing().masterUid == request.auth.uid && incoming().status in ['Выполнена', 'Отменена'] && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
+                       );
+
+      allow delete: if isSignedIn() && isValidId(bookingId) && existing().clientUid == request.auth.uid;
+    }
+
+    // 5. Nail Art Inspiration Catalog
+    match /nailArts/{artId} {
+      allow get: if isSignedIn() && isValidId(artId) && (existing().visibility == 'public' || existing().userId == request.auth.uid);
+      allow list: if isSignedIn() && (existing().visibility == 'public' || existing().userId == request.auth.uid);
+
+      allow create: if isSignedIn() &&
+                       isValidId(artId) &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().likes == 0 &&
+                       incoming().views == 0 &&
+                       incoming().keys().hasAll(['userId', 'visibility', 'title', 'masterName', 'complexity', 'extraPrice', 'imageUrl', 'likes', 'views', 'description', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'visibility', 'title', 'masterName', 'complexity', 'extraPrice', 'imageUrl', 'likes', 'views', 'description', 'createdAt', 'updatedAt']) &&
+                       isValidNailArt(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(artId) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       isValidNailArt(incoming()) &&
+                       (
+                         (existing().userId == request.auth.uid &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['title', 'complexity', 'extraPrice', 'imageUrl', 'description', 'updatedAt'])) ||
+                         ((incoming().likes == existing().likes || incoming().likes == existing().likes + 1) &&
+                          (incoming().views == existing().views || incoming().views == existing().views + 1) &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['likes', 'views', 'updatedAt']))
+                       );
+
+      allow delete: if isSignedIn() && isValidId(artId) && existing().userId == request.auth.uid;
+    }
+
+    // 6. Verified Reviews
+    match /reviews/{reviewId} {
+      allow get: if isSignedIn() && isValidId(reviewId) && (existing().visibility == 'public' || existing().authorUid == request.auth.uid);
+      allow list: if isSignedIn() && (existing().visibility == 'public' || existing().authorUid == request.auth.uid);
+
+      allow create: if isSignedIn() &&
+                       isValidId(reviewId) &&
+                       incoming().authorUid == request.auth.uid &&
+                       incoming().keys().hasAll(['authorUid', 'visibility', 'targetId', 'targetType', 'authorName', 'rating', 'comment', 'dateStr', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['authorUid', 'visibility', 'targetId', 'targetType', 'authorName', 'rating', 'comment', 'dateStr', 'createdAt', 'updatedAt']) &&
+                       isValidReview(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(reviewId) &&
+                       existing().authorUid == request.auth.uid &&
+                       incoming().authorUid == existing().authorUid &&
+                       incoming().createdAt == existing().createdAt &&
+                       isValidReview(incoming()) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['rating', 'comment', 'updatedAt']);
+
+      allow delete: if isSignedIn() && isValidId(reviewId) && existing().authorUid == request.auth.uid;
+    }
+
+    // 7. Honest Multi-User Referral Codes & Single-Use Redemptions
+    match /referralCodes/{code} {
+      allow get: if isSignedIn() && isValidId(code);
+      allow list: if false;
+
+      allow create: if isSignedIn() &&
+                       isValidId(code) &&
+                       incoming().ownerUid == request.auth.uid &&
+                       incoming().redemptionCount == 0 &&
+                       !('lastRedeemedBy' in incoming()) &&
+                       incoming().keys().hasAll(['ownerUid', 'ownerName', 'redemptionCount', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['ownerUid', 'ownerName', 'redemptionCount', 'createdAt', 'updatedAt']) &&
+                       isValidReferralCode(incoming());
+
+      // Only another signed-in user redeeming atomically with their redemption receipt may increment redemptionCount
+      allow update: if isSignedIn() &&
+                       isValidId(code) &&
+                       request.auth.uid != existing().ownerUid &&
+                       incoming().ownerUid == existing().ownerUid &&
+                       incoming().ownerName == existing().ownerName &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().redemptionCount == existing().redemptionCount + 1 &&
+                       incoming().lastRedeemedBy == request.auth.uid &&
+                       existsAfter(/databases/$(database)/documents/referralCodes/$(code)/redemptions/$(request.auth.uid)) &&
+                       isValidReferralCode(incoming()) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['redemptionCount', 'lastRedeemedBy', 'updatedAt']);
+
+      allow delete: if isSignedIn() && isValidId(code) && existing().ownerUid == request.auth.uid;
+
+      match /redemptions/{claimerUid} {
+        allow get: if isSignedIn() && isValidId(code) && isValidId(claimerUid) &&
+                      (request.auth.uid == claimerUid ||
+                       get(/databases/$(database)/documents/referralCodes/$(code)).data.ownerUid == request.auth.uid);
+        allow list: if isSignedIn() && isValidId(code) &&
+                       get(/databases/$(database)/documents/referralCodes/$(code)).data.ownerUid == request.auth.uid;
+
+        allow create: if isSignedIn() &&
+                         isValidId(code) &&
+                         isValidId(claimerUid) &&
+                         request.auth.uid == claimerUid &&
+                         incoming().claimerUid == request.auth.uid &&
+                         incoming().code == code &&
+                         exists(/databases/$(database)/documents/referralCodes/$(code)) &&
+                         get(/databases/$(database)/documents/referralCodes/$(code)).data.ownerUid != request.auth.uid &&
+                         incoming().keys().hasAll(['claimerUid', 'claimerName', 'code', 'createdAt']) &&
+                         incoming().keys().hasOnly(['claimerUid', 'claimerName', 'code', 'createdAt']) &&
+                         isValidReferralRedemption(incoming());
+
+        allow update, delete: if false;
+      }
+    }
+  }
+}

@@ -30,6 +30,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.automirrored.filled.SendToMobile
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -76,7 +78,6 @@ import com.example.ui.viewmodel.MainViewModel
 import com.example.ui.viewmodel.MasterProfile
 import com.example.ui.viewmodel.ClientProfile
 import com.example.ui.viewmodel.AggregatorReview
-import com.example.ui.viewmodel.CustomAd
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.draw.drawBehind
 import com.example.ui.theme.skinOrnament
@@ -106,6 +107,7 @@ fun AdminDashboardScreen(viewModel: MainViewModel) {
     val roiCalc by viewModel.roiCalc.collectAsStateWithLifecycle()
 
     val fcmToken by viewModel.fcmToken.collectAsStateWithLifecycle()
+    val fcmError by viewModel.fcmError.collectAsStateWithLifecycle()
     val fcmNotifications by viewModel.fcmNotifications.collectAsStateWithLifecycle()
     var fcmCustomTitle by remember { mutableStateOf("Скидка -20% на маникюр! 💅") }
     var fcmCustomBody by remember { mutableStateOf("Успейте записаться на этой неделе со скидкой по промокоду NAIL20!") }
@@ -777,11 +779,16 @@ fun AdminDashboardScreen(viewModel: MainViewModel) {
 
                                         IconButton(
                                             onClick = {
-                                                Toast.makeText(context, "Инициализирована отправка персонального предложения клиенту ${profile.name}", Toast.LENGTH_SHORT).show()
+                                                viewModel.sendFcmPromotion(
+                                                    context,
+                                                    "Персональное предложение для ${profile.name}",
+                                                    "Специальная скидка в студии NailiX!",
+                                                    fcmCustomPromoCode
+                                                )
                                             },
                                             modifier = Modifier.testTag("contact_client_${profile.phone}")
                                         ) {
-                                            Icon(Icons.Default.SendToMobile, contentDescription = "Отправить акцию", tint = MaterialTheme.colorScheme.primary)
+                                            Icon(Icons.AutoMirrored.Filled.SendToMobile, contentDescription = "Отправить акцию", tint = MaterialTheme.colorScheme.primary)
                                         }
                                     }
                                 }
@@ -821,7 +828,7 @@ fun AdminDashboardScreen(viewModel: MainViewModel) {
                                             )
                                             Spacer(modifier = Modifier.width(8.dp))
                                             Text(
-                                                text = if (nodeStatus.isConnected) "НОДА ОНЛАЙН (Beelink SER 9)" else "ОФФЛАЙН",
+                                                text = if (nodeStatus.isConnected) "УЗЕЛ ДОСТУПЕН (${nodeStatus.latencyMs} мс)" else "ОФФЛАЙН",
                                                 style = MaterialTheme.typography.titleMedium,
                                                 fontWeight = FontWeight.Bold,
                                                 color = MaterialTheme.colorScheme.primary
@@ -832,7 +839,7 @@ fun AdminDashboardScreen(viewModel: MainViewModel) {
                                             color = MaterialTheme.colorScheme.primary
                                         ) {
                                             Text(
-                                                text = "🧅 Tor v3",
+                                                text = if (nodeStatus.isTorRoutingEnabled) "🧅 SOCKS5 :9050" else "TCP Direct",
                                                 color = Color.White,
                                                 fontSize = 11.sp,
                                                 fontWeight = FontWeight.Bold,
@@ -845,43 +852,56 @@ fun AdminDashboardScreen(viewModel: MainViewModel) {
                                     HorizontalDivider()
                                     Spacer(modifier = Modifier.height(10.dp))
 
-                                    // Onion address row
+                                    // Address row
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
                                         Column(modifier = Modifier.weight(1f)) {
-                                            Text("Onion адрес скрытого сервиса:", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                            Text(nodeStatus.onionAddress, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+                                            Text("Onion адрес (опционально):", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text(
+                                                text = nodeStatus.onionAddress.ifBlank { "Не настроен" },
+                                                fontWeight = FontWeight.Bold,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
                                         }
-                                        IconButton(
-                                            onClick = {
-                                                clipboardManager.setText(AnnotatedString(nodeStatus.onionAddress))
-                                                Toast.makeText(context, "🧅 Onion-адрес скопирован в буфер!", Toast.LENGTH_SHORT).show()
+                                        if (nodeStatus.onionAddress.isNotBlank()) {
+                                            IconButton(
+                                                onClick = {
+                                                    clipboardManager.setText(AnnotatedString(nodeStatus.onionAddress))
+                                                    Toast.makeText(context, "Onion-адрес скопирован!", Toast.LENGTH_SHORT).show()
+                                                }
+                                            ) {
+                                                Icon(Icons.Default.ContentCopy, contentDescription = "Копировать Onion", tint = MaterialTheme.colorScheme.primary)
                                             }
-                                        ) {
-                                            Icon(Icons.Default.ContentCopy, contentDescription = "Копировать Onion", tint = MaterialTheme.colorScheme.primary)
                                         }
                                     }
 
                                     Spacer(modifier = Modifier.height(6.dp))
-                                    Text("Локальный IP: ${nodeStatus.localAddress} • Пинг: ${nodeStatus.latencyMs} мс", style = MaterialTheme.typography.bodySmall)
-                                    Text("Аппаратный чип: ${nodeStatus.npuStatus}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
-                                    Text("RAM: ${nodeStatus.ramUsage} • Нагрузка CPU: ${nodeStatus.cpuLoadPercent}% • Аптайм: ${nodeStatus.uptimeHours} ч", style = MaterialTheme.typography.bodySmall)
+                                    Text(
+                                        text = "Локальный адрес: ${nodeStatus.localAddress.ifBlank { "Не задан" }} • Пинг: ${if (nodeStatus.latencyMs >= 0) "${nodeStatus.latencyMs} мс" else "—"}",
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                    Text(
+                                        text = "Диагностика: ${nodeStatus.diagnosticMessage}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = if (nodeStatus.isConnected) Color(0xFF059669) else MaterialTheme.colorScheme.error,
+                                        fontWeight = FontWeight.Medium
+                                    )
 
                                     Spacer(modifier = Modifier.height(12.dp))
                                     Button(
                                         onClick = {
                                             viewModel.pingSovereignNode()
-                                            Toast.makeText(context, "📡 Опрос ноды Beelink SER 9 завершен: состояние отличное!", Toast.LENGTH_SHORT).show()
                                         },
                                         modifier = Modifier.fillMaxWidth().testTag("ping_sovereign_node_btn"),
                                         shape = RoundedCornerShape(10.dp)
                                     ) {
                                         Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
                                         Spacer(modifier = Modifier.width(6.dp))
-                                        Text("Проверить статус ноды 📡", fontWeight = FontWeight.Bold)
+                                        Text("Проверить связь (TCP Ping)", fontWeight = FontWeight.Bold)
                                     }
                                 }
                             }
@@ -942,10 +962,10 @@ fun AdminDashboardScreen(viewModel: MainViewModel) {
                                     Spacer(modifier = Modifier.height(10.dp))
                                     Text("Очередь: ${simplexQueue.queueAddress}", style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     Text("Отпечаток Curve25519: ${simplexQueue.fingerprint}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                                    Text("Всего сообщений: ${simplexQueue.totalMessages} (Новых: ${simplexQueue.unreadCount})", style = MaterialTheme.typography.bodySmall)
+                                    Text("Всего локальных событий: ${simplexQueue.totalMessages} (Ожидают сети: ${simplexQueue.pendingOfflineCount})", style = MaterialTheme.typography.bodySmall)
 
                                     Spacer(modifier = Modifier.height(12.dp))
-                                    Text("Последние криптографические транзакции:", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                                    Text("Журнал SHA-256 событий:", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
                                     Spacer(modifier = Modifier.height(6.dp))
 
                                     simplexMessages.forEach { msg ->
@@ -962,7 +982,7 @@ fun AdminDashboardScreen(viewModel: MainViewModel) {
                                                 Spacer(modifier = Modifier.height(4.dp))
                                                 Text(msg.decryptedSummary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                                                 Spacer(modifier = Modifier.height(2.dp))
-                                                Text("Payload: ${msg.payloadEncrypted.take(24)}...", fontSize = 10.sp, color = Color.Gray)
+                                                Text("SHA-256: ${msg.payloadSha256.take(24)}...", fontSize = 10.sp, color = Color.Gray)
                                             }
                                         }
                                     }
@@ -970,7 +990,7 @@ fun AdminDashboardScreen(viewModel: MainViewModel) {
                             }
                         }
 
-                        // 4. P2P CRDT Sync & Encrypted Backup
+                        // 4. Local Snapshot Integrity & JSON Export
                         item {
                             Card(
                                 modifier = Modifier.fillMaxWidth(),
@@ -979,10 +999,10 @@ fun AdminDashboardScreen(viewModel: MainViewModel) {
                                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                             ) {
                                 Column(modifier = Modifier.padding(16.dp)) {
-                                    Text("🔄 Бесконфликтная P2P синхронизация (CRDT)", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                                    Text("🔄 Локальный снимок базы Room (SHA-256)", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
                                     Spacer(modifier = Modifier.height(6.dp))
                                     Text("SHA-256 State Hash: ${p2pSyncState.stateHash.take(28)}...", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
-                                    Text("Синхронизировано записей: ${p2pSyncState.syncedRecordsCount} • Конфликтов: ${p2pSyncState.pendingConflicts}", style = MaterialTheme.typography.bodySmall)
+                                    Text("Записей в снимке: ${p2pSyncState.syncedRecordsCount} • Очередь офлайн: ${p2pSyncState.pendingConflicts}", style = MaterialTheme.typography.bodySmall)
 
                                     Spacer(modifier = Modifier.height(12.dp))
                                     Row(
@@ -991,29 +1011,29 @@ fun AdminDashboardScreen(viewModel: MainViewModel) {
                                     ) {
                                         OutlinedButton(
                                             onClick = {
-                                                viewModel.triggerP2PSync()
-                                                Toast.makeText(context, "🔄 CRDT P2P синхронизация успешно завершена!", Toast.LENGTH_SHORT).show()
+                                                viewModel.computeRoomStateSnapshot()
+                                                Toast.makeText(context, "🔄 SHA-256 снимок базы Room пересчитан!", Toast.LENGTH_SHORT).show()
                                             },
                                             modifier = Modifier.weight(1f).testTag("trigger_p2p_sync_btn"),
                                             shape = RoundedCornerShape(10.dp)
                                         ) {
                                             Icon(Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(16.dp))
                                             Spacer(modifier = Modifier.width(4.dp))
-                                            Text("P2P Синхронизация", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                            Text("Снимок SHA-256", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                         }
 
                                         Button(
                                             onClick = {
-                                                val backup = viewModel.exportEncryptedBackup()
+                                                val backup = viewModel.exportSnapshotJson()
                                                 clipboardManager.setText(AnnotatedString(backup))
-                                                Toast.makeText(context, "🔐 Зашифрованный бэкап скопирован в буфер!", Toast.LENGTH_LONG).show()
+                                                Toast.makeText(context, "📋 JSON-снимок Room скопирован в буфер!", Toast.LENGTH_LONG).show()
                                             },
                                             modifier = Modifier.weight(1f).testTag("export_p2p_backup_btn"),
                                             shape = RoundedCornerShape(10.dp)
                                         ) {
                                             Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(16.dp))
                                             Spacer(modifier = Modifier.width(4.dp))
-                                            Text("Экспорт бэкапа", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                            Text("Экспорт JSON", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                         }
                                     }
                                 }
@@ -1132,13 +1152,16 @@ fun AdminDashboardScreen(viewModel: MainViewModel) {
                                         horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
                                         Column(modifier = Modifier.weight(1f)) {
-                                            Text("FCM Токен Устройства (Device Registration Token):", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text("FCM Токен Устройства:", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                             Text(fcmToken, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            if (fcmError != null) {
+                                                Text(fcmError.orEmpty(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                                            }
                                         }
                                         IconButton(
                                             onClick = {
                                                 clipboardManager.setText(AnnotatedString(fcmToken))
-                                                Toast.makeText(context, "📋 FCM Токен скопирован в буфер для Firebase Console!", Toast.LENGTH_SHORT).show()
+                                                Toast.makeText(context, "FCM Токен скопирован в буфер!", Toast.LENGTH_SHORT).show()
                                             }
                                         ) {
                                             Icon(Icons.Default.ContentCopy, contentDescription = "Копировать токен", tint = MaterialTheme.colorScheme.primary)
@@ -1146,7 +1169,7 @@ fun AdminDashboardScreen(viewModel: MainViewModel) {
                                     }
 
                                     Spacer(modifier = Modifier.height(12.dp))
-                                    Text("Быстрое тестирование входящих Push-уведомлений:", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                                    Text("Локальные уведомления устройства:", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
                                     Spacer(modifier = Modifier.height(8.dp))
 
                                     Row(
@@ -1155,8 +1178,7 @@ fun AdminDashboardScreen(viewModel: MainViewModel) {
                                     ) {
                                         OutlinedButton(
                                             onClick = {
-                                                viewModel.sendTestFcmAppointmentReminder(context)
-                                                Toast.makeText(context, "💅 FCM Напоминание отправлено в шторку Android!", Toast.LENGTH_SHORT).show()
+                                                viewModel.sendFcmAppointmentReminder(context)
                                             },
                                             modifier = Modifier.weight(1f).testTag("test_fcm_reminder_btn"),
                                             shape = RoundedCornerShape(10.dp)
@@ -1168,8 +1190,7 @@ fun AdminDashboardScreen(viewModel: MainViewModel) {
 
                                         Button(
                                             onClick = {
-                                                viewModel.sendTestFcmPromotion(context, fcmCustomTitle, fcmCustomBody, fcmCustomPromoCode)
-                                                Toast.makeText(context, "🎁 FCM Промо-акция отправлена в шторку Android!", Toast.LENGTH_SHORT).show()
+                                                viewModel.sendFcmPromotion(context, fcmCustomTitle, fcmCustomBody, fcmCustomPromoCode)
                                             },
                                             modifier = Modifier.weight(1f).testTag("test_fcm_promo_btn"),
                                             shape = RoundedCornerShape(10.dp)
@@ -1181,13 +1202,13 @@ fun AdminDashboardScreen(viewModel: MainViewModel) {
                                     }
 
                                     Spacer(modifier = Modifier.height(16.dp))
-                                    Text("Конструктор промо-рассылки клиентам:", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                                    Text("Создать локальное промо-уведомление:", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
                                     Spacer(modifier = Modifier.height(6.dp))
 
                                     OutlinedTextField(
                                         value = fcmCustomTitle,
                                         onValueChange = { fcmCustomTitle = it },
-                                        label = { Text("Заголовок Push-уведомления") },
+                                        label = { Text("Заголовок уведомления") },
                                         singleLine = true,
                                         modifier = Modifier.fillMaxWidth().testTag("fcm_custom_title_input"),
                                         shape = RoundedCornerShape(10.dp)
@@ -1198,7 +1219,7 @@ fun AdminDashboardScreen(viewModel: MainViewModel) {
                                     OutlinedTextField(
                                         value = fcmCustomBody,
                                         onValueChange = { fcmCustomBody = it },
-                                        label = { Text("Текст специального предложения") },
+                                        label = { Text("Текст предложения") },
                                         minLines = 2,
                                         modifier = Modifier.fillMaxWidth().testTag("fcm_custom_body_input"),
                                         shape = RoundedCornerShape(10.dp)
@@ -1219,15 +1240,14 @@ fun AdminDashboardScreen(viewModel: MainViewModel) {
 
                                     Button(
                                         onClick = {
-                                            viewModel.sendTestFcmPromotion(context, fcmCustomTitle, fcmCustomBody, fcmCustomPromoCode)
-                                            Toast.makeText(context, "🚀 FCM кампания успешно запущена! Push разослан подписчикам!", Toast.LENGTH_LONG).show()
+                                            viewModel.sendFcmPromotion(context, fcmCustomTitle, fcmCustomBody, fcmCustomPromoCode)
                                         },
                                         modifier = Modifier.fillMaxWidth().testTag("launch_fcm_campaign_btn"),
                                         shape = RoundedCornerShape(10.dp)
                                     ) {
-                                        Icon(Icons.Default.Send, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null, modifier = Modifier.size(16.dp))
                                         Spacer(modifier = Modifier.width(6.dp))
-                                        Text("Разослать FCM Push-уведомление 🚀", fontWeight = FontWeight.Bold)
+                                        Text("Отправить уведомление на устройство", fontWeight = FontWeight.Bold)
                                     }
 
                                     if (fcmNotifications.isNotEmpty()) {

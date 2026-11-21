@@ -1,16 +1,34 @@
 package com.example.ui.viewmodel
 
 import android.app.Application
+import android.content.Context
+import android.net.Uri
+import android.widget.Toast
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.example.ai.AiAdviceUiState
+import com.example.ai.AiImageUiState
+import com.example.ai.NailAiRepository
 import com.example.data.AppDatabase
 import com.example.data.AppRepository
 import com.example.data.Booking
-import com.example.data.Reminder
-import com.example.data.ServiceItem
-import com.example.data.UserLoyalty
-import com.example.data.ReferredFriend
+import com.example.data.CloudSyncRepository
+import com.example.data.InstagramPost
+import com.example.data.InstagramRealScraper
 import com.example.data.LoyaltyTransaction
+import com.example.data.MasterNailArtEntity
+import com.example.data.ReferredFriend
+import com.example.data.Reminder
+import com.example.data.ServiceEntity
+import com.example.data.ServiceItem
+import com.example.data.SovereignNodeManager
+import com.example.data.UserLoyalty
+import com.example.notification.FcmNotificationManager
+import com.example.util.VisitTicketCryptoManager
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -19,199 +37,36 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.File
+import java.io.FileOutputStream
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
-import android.media.MediaPlayer
-import android.media.AudioAttributes
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlin.math.sqrt
 
-data class RadioStation(
-    val id: String,
-    val name: String,
-    val genre: String,
-    val country: String,
-    val url: String
-)
-
-data class ClientProfile(
-    val name: String,
-    val phone: String,
-    val email: String = "",
-    val totalBookings: Int = 0,
-    val totalSpent: Double = 0.0,
-    val isSubscribed: Boolean = false,
-    val rating: Double = 5.0,
-    val ratingCount: Int = 1,
-    val homeAddress: String = "Calella, Carrer de Jovara 100",
-    val homeLat: Double = 41.6140,
-    val homeLon: Double = 2.6600,
-    val workAddress: String = "Calella, Carrer de Sant Jaume 150",
-    val workLat: Double = 41.6160,
-    val workLon: Double = 2.6630,
-    val referralCode: String = "VIC-8842-NIL"
-)
-
-data class AdminStats(
-    val totalRevenue: Double = 0.0,
-    val activeBookings: Int = 0,
-    val completedBookings: Int = 0,
-    val popularCategory: String = "Нет",
-    val topMaster: String = "Нет"
-)
-
-data class MasterProfile(
-    val id: Int,
-    val name: String,
-    val address: String,
-    val lat: Double,
-    val lon: Double,
-    val workingSchedule: String,
-    val experienceYears: Int,
-    val languages: List<String>,
-    val instagramUsername: String,
-    val rating: Double = 5.0,
-    val ratingCount: Int = 1,
-    val isUserCreated: Boolean = false,
-    val currency: String = "EUR"
-)
-
-data class AggregatorReview(
-    val id: Int,
-    val targetId: String, // master ID (stringified) or client phone
-    val targetType: String, // "master" or "client"
-    val authorName: String,
-    val rating: Int,
-    val comment: String,
-    val dateStr: String
-)
-
-data class CustomAd(
-    val id: Int,
-    val masterName: String,
-    val title: String,
-    val description: String,
-    val discount: String,
-    val themeColor: String,
-    val ctaText: String = "Записаться"
-)
-
-data class NailContest(
-    val id: String,
-    val title: String,
-    val desc: String,
-    val prize: String,
-    val endDate: String,
-    val icon: String
-)
-
-data class ContestEntry(
-    val id: String,
-    val contestId: String,
-    val title: String,
-    val imageUrl: String,
-    val authorName: String,
-    val votes: Int,
-    val isUserSubmitted: Boolean = false
-)
-
-class MainViewModel(application: Application) : AndroidViewModel(application) {
+class MainViewModel @JvmOverloads constructor(
+    application: Application,
+    val currentUserId: String = "",
+    private val cloudSyncRepository: CloudSyncRepository? = null,
+    private val nailAiRepository: NailAiRepository = NailAiRepository()
+) : AndroidViewModel(application) {
 
     private val db = AppDatabase.getDatabase(application)
     private val repository = AppRepository(db)
-    private val prefs = application.getSharedPreferences("nailix_prefs", android.content.Context.MODE_PRIVATE)
-
-    // ----------------------------------------------------
-    // ADVERTISING SYSTEM FOR FREE VERSION
-    // ----------------------------------------------------
-    private val _adSource = MutableStateFlow(prefs.getString("ad_source", "google") ?: "google")
-    val adSource: StateFlow<String> = _adSource.asStateFlow()
-
-    private val _customAds = MutableStateFlow<List<CustomAd>>(emptyList())
-    val customAds: StateFlow<List<CustomAd>> = _customAds.asStateFlow()
-
-    fun setAdSource(source: String) {
-        _adSource.value = source
-        prefs.edit().putString("ad_source", source).apply()
-    }
-
-    private fun customAdToJson(ad: CustomAd): String {
-        val json = org.json.JSONObject()
-        json.put("id", ad.id)
-        json.put("masterName", ad.masterName)
-        json.put("title", ad.title)
-        json.put("description", ad.description)
-        json.put("discount", ad.discount)
-        json.put("themeColor", ad.themeColor)
-        json.put("ctaText", ad.ctaText)
-        return json.toString()
-    }
-
-    private fun jsonToCustomAd(jsonStr: String): CustomAd {
-        val json = org.json.JSONObject(jsonStr)
-        return CustomAd(
-            id = json.optInt("id", 0),
-            masterName = json.optString("masterName", ""),
-            title = json.optString("title", ""),
-            description = json.optString("description", ""),
-            discount = json.optString("discount", ""),
-            themeColor = json.optString("themeColor", "Pink"),
-            ctaText = json.optString("ctaText", "Записаться")
-        )
-    }
-
-    fun loadCustomAds() {
-        val jsonStr = prefs.getString("custom_ads", null)
-        if (jsonStr == null) {
-            _customAds.value = listOf(
-                CustomAd(
-                    id = 1,
-                    masterName = "Виктория (Ручная Роспись)",
-                    title = "Скидка на первый визит! 💅",
-                    description = "Попробуйте уникальный дизайн ручной росписи со скидкой!",
-                    discount = "10%",
-                    themeColor = "Pink",
-                    ctaText = "Хочу скидку!"
-                ),
-                CustomAd(
-                    id = 2,
-                    masterName = "Елена (SMART Аппаратный Педикюр)",
-                    title = "Гладкие пяточки к лету! 🦶✨",
-                    description = "SMART педикюр премиум-уровня с гарантией результата.",
-                    discount = "15%",
-                    themeColor = "Gold",
-                    ctaText = "Записаться"
-                )
-            )
-        } else {
-            val list = mutableListOf<CustomAd>()
-            try {
-                val arr = org.json.JSONArray(jsonStr)
-                for (i in 0 until arr.length()) {
-                    list.add(jsonToCustomAd(arr.getString(i)))
-                }
-                _customAds.value = list
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }
-    }
-
-    fun saveCustomAds(list: List<CustomAd>) {
-        _customAds.value = list
-        val arr = org.json.JSONArray()
-        list.forEach { arr.put(customAdToJson(it)) }
-        prefs.edit().putString("custom_ads", arr.toString()).apply()
-    }
-
-    fun addCustomAd(ad: CustomAd) {
-        val current = _customAds.value.toMutableList()
-        current.add(0, ad)
-        saveCustomAds(current)
-    }
+    private val prefs = application.getSharedPreferences("nailix_prefs", Context.MODE_PRIVATE)
+    private val radioController = RadioPlayerController(viewModelScope)
 
     // ----------------------------------------------------
     // SALON AGGREGATOR ENGINE STATES
@@ -219,7 +74,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _userRole = MutableStateFlow("client") // "client", "master"
     val userRole: StateFlow<String> = _userRole.asStateFlow()
 
-    // Multiple profiles on device
     val isPremium = MutableStateFlow(false)
     val savedClientProfiles = MutableStateFlow<List<ClientProfile>>(emptyList())
     val savedMasterProfiles = MutableStateFlow<List<MasterProfile>>(emptyList())
@@ -229,9 +83,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val clientName = MutableStateFlow("")
     val clientPhone = MutableStateFlow("")
 
-    // JSON Helper methods for ClientProfile
     private fun clientProfileToJson(profile: ClientProfile): String {
-        val json = org.json.JSONObject()
+        val json = JSONObject()
         json.put("name", profile.name)
         json.put("phone", profile.phone)
         json.put("email", profile.email)
@@ -251,7 +104,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun jsonToClientProfile(jsonStr: String): ClientProfile {
-        val json = org.json.JSONObject(jsonStr)
+        val json = JSONObject(jsonStr)
+        val fallbackCode = if (currentUserId.isNotBlank() && cloudSyncRepository != null) {
+            cloudSyncRepository.generateReferralCodeForUid(currentUserId)
+        } else {
+            ""
+        }
         return ClientProfile(
             name = json.optString("name", ""),
             phone = json.optString("phone", ""),
@@ -267,13 +125,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             workAddress = json.optString("workAddress", "Calella"),
             workLat = json.optDouble("workLat", 41.6160),
             workLon = json.optDouble("workLon", 2.6630),
-            referralCode = json.optString("referralCode", "VIC-8842-NIL")
+            referralCode = json.optString("referralCode", fallbackCode).ifBlank { fallbackCode }
         )
     }
 
-    // JSON Helper methods for MasterProfile
     private fun masterProfileToJson(profile: MasterProfile): String {
-        val json = org.json.JSONObject()
+        val json = JSONObject()
         json.put("id", profile.id)
         json.put("name", profile.name)
         json.put("address", profile.address)
@@ -281,7 +138,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         json.put("lon", profile.lon)
         json.put("workingSchedule", profile.workingSchedule)
         json.put("experienceYears", profile.experienceYears)
-        val langsArr = org.json.JSONArray()
+        val langsArr = JSONArray()
         profile.languages.forEach { langsArr.put(it) }
         json.put("languages", langsArr)
         json.put("instagramUsername", profile.instagramUsername)
@@ -289,11 +146,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         json.put("ratingCount", profile.ratingCount)
         json.put("isUserCreated", profile.isUserCreated)
         json.put("currency", profile.currency)
+        json.put("ownerUid", profile.ownerUid)
         return json.toString()
     }
 
     private fun jsonToMasterProfile(jsonStr: String): MasterProfile {
-        val json = org.json.JSONObject(jsonStr)
+        val json = JSONObject(jsonStr)
         val langsArr = json.optJSONArray("languages")
         val langsList = mutableListOf<String>()
         if (langsArr != null) {
@@ -314,15 +172,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             rating = json.optDouble("rating", 5.0),
             ratingCount = json.optInt("ratingCount", 1),
             isUserCreated = json.optBoolean("isUserCreated", false),
-            currency = json.optString("currency", "EUR")
+            currency = json.optString("currency", "EUR"),
+            ownerUid = json.optString("ownerUid", "")
         )
     }
 
     fun saveProfiles() {
-        val clientArray = org.json.JSONArray()
+        val clientArray = JSONArray()
         savedClientProfiles.value.forEach { clientArray.put(clientProfileToJson(it)) }
-        
-        val masterArray = org.json.JSONArray()
+
+        val masterArray = JSONArray()
         savedMasterProfiles.value.forEach { masterArray.put(masterProfileToJson(it)) }
 
         prefs.edit()
@@ -348,7 +207,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         _selectedSkin.value = prefs.getString("global_skin", "gaudi") ?: "gaudi"
         _globalCurrency.value = prefs.getString("global_currency", "EUR") ?: "EUR"
-        _isDarkTheme.value = prefs.getBoolean("is_dark_theme", true) // Default is dark theme!
+        _isDarkTheme.value = prefs.getBoolean("is_dark_theme", true)
         val savedLang = prefs.getString("onboarding_language", null)
         if (savedLang != null) {
             _onboardingLanguage.value = savedLang
@@ -360,7 +219,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val clientList = mutableListOf<ClientProfile>()
         if (clientsJsonStr != null) {
             try {
-                val arr = org.json.JSONArray(clientsJsonStr)
+                val arr = JSONArray(clientsJsonStr)
                 for (i in 0 until arr.length()) {
                     clientList.add(jsonToClientProfile(arr.getString(i)))
                 }
@@ -372,7 +231,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val masterList = mutableListOf<MasterProfile>()
         if (mastersJsonStr != null) {
             try {
-                val arr = org.json.JSONArray(mastersJsonStr)
+                val arr = JSONArray(mastersJsonStr)
                 for (i in 0 until arr.length()) {
                     masterList.add(jsonToMasterProfile(arr.getString(i)))
                 }
@@ -381,9 +240,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        // Purge any legacy default mock profile data if present
-        clientList.removeAll { it.phone == "+34612345678" || it.name == "Дарья Козлова" || it.phone == "+7 999 000-00-00" || it.name == "Гость NailiX" || it.name == "NailiX Guest" }
-        masterList.removeAll { it.id == 99 || it.id in listOf(1, 2, 3) || it.name.contains("Виктория (Ручная Роспись)") || it.name.contains("Виктория Мастер") || it.instagramUsername == "victoria1001art" }
+        clientList.removeAll {
+            it.phone == "+34612345678" ||
+                it.name == "Дарья Козлова" ||
+                it.phone == "+7 999 000-00-00"
+        }
+        masterList.removeAll {
+            it.id == 99 ||
+                it.id in listOf(1, 2, 3) ||
+                it.instagramUsername == "victoria1001art"
+        }
 
         primaryClientPhone.value = primClientPhone
         primaryMasterId.value = if (primMasterId != -1) primMasterId else null
@@ -391,13 +257,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         savedClientProfiles.value = clientList
         savedMasterProfiles.value = masterList
 
+        val resolvedCode = if (currentUserId.isNotBlank() && cloudSyncRepository != null) {
+            cloudSyncRepository.generateReferralCodeForUid(currentUserId)
+        } else {
+            ""
+        }
+
         if (clientList.isNotEmpty()) {
             val activeClient = clientList.find { it.phone == primaryClientPhone.value } ?: clientList.first()
-            _clientProfile.value = activeClient
+            _clientProfile.value = if (activeClient.referralCode.isBlank()) {
+                activeClient.copy(referralCode = resolvedCode)
+            } else {
+                activeClient
+            }
             clientName.value = activeClient.name
             clientPhone.value = activeClient.phone
         } else {
-            _clientProfile.value = ClientProfile(name = "", phone = "", email = "", homeAddress = "", workAddress = "")
+            _clientProfile.value = ClientProfile(
+                name = "",
+                phone = "",
+                email = "",
+                homeAddress = "",
+                workAddress = "",
+                referralCode = resolvedCode
+            )
             clientName.value = ""
             clientPhone.value = ""
         }
@@ -422,13 +305,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val list = savedClientProfiles.value
         val isPrim = (phone == primaryClientPhone.value)
         if (!isPremium.value && !isPrim && list.size > 1) {
-            return false // Frozen!
+            return false
         }
         val profile = list.find { it.phone == phone } ?: return false
         _clientProfile.value = profile
         clientName.value = profile.name
         clientPhone.value = profile.phone
         _userRole.value = "client"
+        syncUserProfileToCloud()
         return true
     }
 
@@ -436,11 +320,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val list = savedMasterProfiles.value
         val isPrim = (id == primaryMasterId.value)
         if (!isPremium.value && !isPrim && list.size > 1) {
-            return false // Frozen!
+            return false
         }
         val profile = list.find { it.id == id } ?: return false
         _registeredMasterProfile.value = profile
         _userRole.value = "master"
+        syncUserProfileToCloud()
         return true
     }
 
@@ -453,6 +338,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (list.any { it.phone == phone }) {
             return "DUPLICATE"
         }
+        val newCode = if (currentUserId.isNotBlank() && cloudSyncRepository != null) {
+            cloudSyncRepository.generateReferralCodeForUid(currentUserId)
+        } else {
+            ""
+        }
         val newProfile = ClientProfile(
             name = name,
             phone = phone,
@@ -462,7 +352,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             homeLon = 2.6600,
             workAddress = "Calella, Carrer de Sant Jaume 150",
             workLat = 41.6160,
-            workLon = 2.6630
+            workLon = 2.6630,
+            referralCode = newCode
         )
         val newList = list + newProfile
         savedClientProfiles.value = newList
@@ -470,10 +361,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             primaryClientPhone.value = phone
         }
         saveProfiles()
+        syncUserProfileToCloud()
         return null
     }
 
-    fun createNewMasterProfile(name: String, address: String, schedule: String, experience: Int, languages: List<String>, instagram: String): String? {
+    fun createNewMasterProfile(
+        name: String,
+        address: String,
+        schedule: String,
+        experience: Int,
+        languages: List<String>,
+        instagram: String
+    ): String? {
         val list = savedMasterProfiles.value
         val maxAllowed = if (isPremium.value) 3 else 1
         if (list.size >= maxAllowed) {
@@ -487,12 +386,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             id = newId,
             name = name,
             address = address,
-            lat = 41.6150 + (0.001 * (-2..2).random()),
-            lon = 2.6620 + (0.001 * (-2..2).random()),
+            lat = 41.6150,
+            lon = 2.6620,
             workingSchedule = schedule.ifEmpty { "Пн-Пт: 09:00 - 18:00" },
             experienceYears = experience,
             languages = languages.ifEmpty { listOf("Испанский") },
-            instagramUsername = instagram.ifEmpty { "new_nail_artist" },
+            instagramUsername = instagram.ifEmpty { "nail_artist" },
             rating = 5.0,
             ratingCount = 1,
             isUserCreated = true
@@ -504,6 +403,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             primaryMasterId.value = newId
         }
         saveProfiles()
+        publishMasterToCloud(newMaster)
         return null
     }
 
@@ -528,19 +428,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val prim = savedMasterProfiles.value.find { it.id == primaryMasterId.value } ?: savedMasterProfiles.value.first()
             _registeredMasterProfile.value = prim
         }
+        syncUserProfileToCloud()
     }
 
-    // Onboarding Engine States
+    // ----------------------------------------------------
+    // ONBOARDING, APPEARANCE & FIREBASE AI LOGIC STATES
+    // ----------------------------------------------------
     private val _isOnboarded = MutableStateFlow(false)
     val isOnboarded: StateFlow<Boolean> = _isOnboarded.asStateFlow()
 
     private val _showSplash = MutableStateFlow(true)
     val showSplash: StateFlow<Boolean> = _showSplash.asStateFlow()
 
-    private val _onboardingStep = MutableStateFlow(0) // 0: Welcome Feature Tour, 1: Language (optional), 2: Role, 3: Profile Info, 4: Master Setup, 5: Profile Chooser
+    private val _onboardingStep = MutableStateFlow(0)
     val onboardingStep: StateFlow<Int> = _onboardingStep.asStateFlow()
 
-    private val _onboardingLanguage = MutableStateFlow("ru") // "ru", "en", "es"
+    private val _onboardingLanguage = MutableStateFlow("ru")
     val onboardingLanguage: StateFlow<String> = _onboardingLanguage.asStateFlow()
 
     val localizationMap: StateFlow<Map<String, String>> = combine(
@@ -555,10 +458,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         initialValue = emptyMap()
     )
 
-    private val _selectedSkin = MutableStateFlow("gaudi") // "gaudi", "barcelona", "van_gogh", "amsterdam", "moscow", "paris", "nails", "flowers", "cosmos", "esoteric"
+    private val _selectedSkin = MutableStateFlow("gaudi")
     val selectedSkin: StateFlow<String> = _selectedSkin.asStateFlow()
 
-    private val _isDarkTheme = MutableStateFlow(true) // Dark by default!
+    private val _isDarkTheme = MutableStateFlow(true)
     val isDarkTheme: StateFlow<Boolean> = _isDarkTheme.asStateFlow()
 
     private val _globalCurrency = MutableStateFlow("EUR")
@@ -567,6 +470,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setSelectedSkin(skin: String) {
         _selectedSkin.value = skin
         saveProfiles()
+        syncUserProfileToCloud()
     }
 
     fun setDarkTheme(isDark: Boolean) {
@@ -577,25 +481,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setGlobalCurrency(currency: String) {
         _globalCurrency.value = currency
         saveProfiles()
+        syncUserProfileToCloud()
     }
 
-    private val _onboardingRole = MutableStateFlow<String?>("client") // Default to client, can select
+    private val _onboardingRole = MutableStateFlow<String?>("client")
     val onboardingRole: StateFlow<String?> = _onboardingRole.asStateFlow()
 
     private val _onboardingAvatarUrl = MutableStateFlow<String?>(null)
     val onboardingAvatarUrl: StateFlow<String?> = _onboardingAvatarUrl.asStateFlow()
 
+    private val _aiAvatarState = MutableStateFlow<AiImageUiState>(AiImageUiState.Idle)
+    val aiAvatarState: StateFlow<AiImageUiState> = _aiAvatarState.asStateFlow()
+
     private val _isGeneratingAvatar = MutableStateFlow(false)
     val isGeneratingAvatar: StateFlow<Boolean> = _isGeneratingAvatar.asStateFlow()
 
-    private val _subscriptionTier = MutableStateFlow("free") // "free", "pro", "promax"
+    private val _aiAdviceState = MutableStateFlow<AiAdviceUiState>(AiAdviceUiState.Idle)
+    val aiAdviceState: StateFlow<AiAdviceUiState> = _aiAdviceState.asStateFlow()
+
+    private val _subscriptionTier = MutableStateFlow("free")
     val subscriptionTier: StateFlow<String> = _subscriptionTier.asStateFlow()
 
     private val _isInstagramConnecting = MutableStateFlow(false)
     val isInstagramConnecting: StateFlow<Boolean> = _isInstagramConnecting.asStateFlow()
 
-    private val _instagramImportFeed = MutableStateFlow<List<com.example.data.InstagramPost>>(emptyList())
-    val instagramImportFeed: StateFlow<List<com.example.data.InstagramPost>> = _instagramImportFeed.asStateFlow()
+    private val _instagramError = MutableStateFlow<String?>(null)
+    val instagramError: StateFlow<String?> = _instagramError.asStateFlow()
+
+    private val _instagramImportFeed = MutableStateFlow<List<InstagramPost>>(emptyList())
+    val instagramImportFeed: StateFlow<List<InstagramPost>> = _instagramImportFeed.asStateFlow()
 
     private val _selectedImportPosts = MutableStateFlow<Set<Int>>(emptySet())
     val selectedImportPosts: StateFlow<Set<Int>> = _selectedImportPosts.asStateFlow()
@@ -607,6 +521,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setOnboardingLanguage(lang: String) {
         _onboardingLanguage.value = lang
         saveProfiles()
+        syncUserProfileToCloud()
     }
 
     fun setOnboardingRole(role: String) {
@@ -622,49 +537,102 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _subscriptionTier.value = tier
     }
 
-    fun simulateAiAvatarGeneration(prompt: String) {
+    fun generateAiAvatarWithGemini(prompt: String) {
         viewModelScope.launch {
             _isGeneratingAvatar.value = true
-            delay(2500) // Synthesizing latency
-            val lowerPrompt = prompt.lowercase()
-            val simulatedUrl = when {
-                lowerPrompt.contains("pink") || lowerPrompt.contains("розов") || lowerPrompt.contains("мими") -> 
-                    "https://images.unsplash.com/photo-1604303739265-fd53384d78af?w=500&auto=format&fit=crop&q=60"
-                lowerPrompt.contains("dark") || lowerPrompt.contains("темн") || lowerPrompt.contains("black") || lowerPrompt.contains("черн") -> 
-                    "https://images.unsplash.com/photo-1607779097040-26e80aa78e66?w=500&auto=format&fit=crop&q=60"
-                lowerPrompt.contains("gold") || lowerPrompt.contains("золот") || lowerPrompt.contains("блест") -> 
-                    "https://images.unsplash.com/photo-1632345031435-8797b2d58045?w=500&auto=format&fit=crop&q=60"
-                else -> 
-                    "https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?w=500&auto=format&fit=crop&q=60"
+            _aiAvatarState.value = AiImageUiState.Loading
+            val result = nailAiRepository.generateAvatarOrNailConcept(getApplication(), prompt)
+            result.onSuccess { (uriString, bitmap) ->
+                _onboardingAvatarUrl.value = uriString
+                _aiAvatarState.value = AiImageUiState.Success(uriString, bitmap)
+            }.onFailure { err ->
+                _aiAvatarState.value = AiImageUiState.Error(
+                    err.localizedMessage ?: "Не удалось сгенерировать изображение через Gemini AI."
+                )
             }
-            _onboardingAvatarUrl.value = simulatedUrl
             _isGeneratingAvatar.value = false
         }
+    }
+
+    fun resetAiAvatarState() {
+        _aiAvatarState.value = AiImageUiState.Idle
+    }
+
+    fun requestAiStylistAdvice(
+        occasion: String,
+        preferredLength: String,
+        preferredShape: String,
+        preferredPalette: String
+    ) {
+        viewModelScope.launch {
+            _aiAdviceState.value = AiAdviceUiState.Loading
+            val result = nailAiRepository.generateNailStylistAdvice(
+                occasion = occasion,
+                preferredLength = preferredLength,
+                preferredShape = preferredShape,
+                preferredPalette = preferredPalette,
+                languageCode = _onboardingLanguage.value
+            )
+            result.onSuccess { advice ->
+                _aiAdviceState.value = AiAdviceUiState.Success(advice)
+            }.onFailure { err ->
+                _aiAdviceState.value = AiAdviceUiState.Error(
+                    err.localizedMessage ?: "Ошибка обращения к AI-стилисту NailiX."
+                )
+            }
+        }
+    }
+
+    fun requestAiVisionPhotoAdvice(
+        bitmap: android.graphics.Bitmap,
+        question: String
+    ) {
+        viewModelScope.launch {
+            _aiAdviceState.value = AiAdviceUiState.Loading
+            val result = nailAiRepository.analyzeHandOrInspirationPhoto(
+                bitmap = bitmap,
+                question = question,
+                languageCode = _onboardingLanguage.value
+            )
+            result.onSuccess { advice ->
+                _aiAdviceState.value = AiAdviceUiState.Success(advice)
+            }.onFailure { err ->
+                _aiAdviceState.value = AiAdviceUiState.Error(
+                    err.localizedMessage ?: "Ошибка анализа фото через Gemini Vision."
+                )
+            }
+        }
+    }
+
+    fun clearInstagramError() {
+        _instagramError.value = null
     }
 
     fun loadTop20InstagramPosts(username: String = "") {
         viewModelScope.launch {
             _isInstagramConnecting.value = true
-            val target = username.trim().removePrefix("@").ifBlank { _instagramUsername.value.removePrefix("@").ifBlank { "art_nail_master" } }
+            _instagramError.value = null
+            val target = username.trim().removePrefix("@")
+                .ifBlank { _instagramUsername.value.removePrefix("@") }
+            if (target.isBlank()) {
+                _instagramError.value = "Укажите имя профиля Instagram (без @) или загрузите фото из галереи."
+                _instagramImportFeed.value = emptyList()
+                _selectedImportPosts.value = emptySet()
+                _isInstagramConnecting.value = false
+                return@launch
+            }
             _instagramUsername.value = target
-            try {
-                val scrapedPosts = com.example.data.InstagramRealScraper.fetchPosts(target)
-                val sortedPosts = scrapedPosts.sortedByDescending { it.likesCount }.take(20)
-                _instagramImportFeed.value = sortedPosts
-                // Mark all top 20 posts selected by default for shortest 1-tap import
-                _selectedImportPosts.value = sortedPosts.map { it.id }.toSet()
-            } catch (e: Exception) {
-                android.util.Log.e("MainViewModel", "Error fetching top 20 posts", e)
-                val backup = com.example.data.InstagramRealScraper.getTop20PopularPosts(target)
-                _instagramImportFeed.value = backup
-                _selectedImportPosts.value = backup.map { it.id }.toSet()
+            val result = InstagramRealScraper.fetchPostsResult(target)
+            result.onSuccess { posts ->
+                _instagramImportFeed.value = posts
+                _selectedImportPosts.value = posts.map { it.id }.toSet()
+            }.onFailure { err ->
+                _instagramImportFeed.value = emptyList()
+                _selectedImportPosts.value = emptySet()
+                _instagramError.value = err.localizedMessage ?: "Не удалось загрузить профиль @$target."
             }
             _isInstagramConnecting.value = false
         }
-    }
-
-    fun startInstagramSimulationImport() {
-        loadTop20InstagramPosts(_instagramUsername.value)
     }
 
     fun selectAllImportPosts() {
@@ -678,38 +646,72 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun authorizeAndImportInstagram(username: String, onComplete: () -> Unit = {}) {
         viewModelScope.launch {
             _isInstagramParsing.value = true
-            val targetUser = username.trim().removePrefix("@").ifBlank { "art_nail_master" }
+            _instagramError.value = null
+            val targetUser = username.trim().removePrefix("@").ifBlank { _instagramUsername.value.removePrefix("@") }
+            if (targetUser.isBlank()) {
+                _instagramError.value = "Укажите имя профиля Instagram."
+                _isInstagramParsing.value = false
+                return@launch
+            }
             _instagramUsername.value = targetUser
-            
-            try {
-                val scrapedPosts = com.example.data.InstagramRealScraper.fetchPosts(targetUser)
-                val top20Posts = scrapedPosts.sortedByDescending { it.likesCount }.take(20)
-                
+            val result = InstagramRealScraper.fetchPostsResult(targetUser)
+            result.onSuccess { top20Posts ->
                 val currentList = _parsedInstagramPosts.value.toMutableList()
                 val existingIds = currentList.map { it.id }.toSet()
                 val uniqueNew = top20Posts.filter { it.id !in existingIds }
-                
                 currentList.addAll(0, uniqueNew)
                 _parsedInstagramPosts.value = currentList
-                
+
                 val displayIds = _selectedDisplayPostIds.value.toMutableSet()
                 displayIds.addAll(top20Posts.map { it.id })
                 _selectedDisplayPostIds.value = displayIds.take(20).toSet()
-            } catch (e: Exception) {
-                val backup = com.example.data.InstagramRealScraper.getTop20PopularPosts(targetUser)
-                val currentList = _parsedInstagramPosts.value.toMutableList()
-                val existingIds = currentList.map { it.id }.toSet()
-                val uniqueNew = backup.filter { it.id !in existingIds }
-                
-                currentList.addAll(0, uniqueNew)
-                _parsedInstagramPosts.value = currentList
-                
-                val displayIds = _selectedDisplayPostIds.value.toMutableSet()
-                displayIds.addAll(backup.map { it.id })
-                _selectedDisplayPostIds.value = displayIds.take(20).toSet()
+                onComplete()
+            }.onFailure { err ->
+                _instagramError.value = err.localizedMessage ?: "Не удалось загрузить работы @$targetUser."
             }
             _isInstagramParsing.value = false
-            onComplete()
+        }
+    }
+
+    fun importLocalGalleryPhotos(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        viewModelScope.launch {
+            val ctx = getApplication<Application>()
+            val importedPosts = withContext(Dispatchers.IO) {
+                val galleryDir = File(ctx.filesDir, "portfolio_gallery")
+                if (!galleryDir.exists()) galleryDir.mkdirs()
+                val todayStr = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(Date())
+                val author = _instagramUsername.value.ifBlank {
+                    _registeredMasterProfile.value?.instagramUsername ?: "nailix_gallery"
+                }
+                uris.take(20).mapIndexedNotNull { idx, uri ->
+                    runCatching {
+                        val destFile = File(galleryDir, "work_${System.currentTimeMillis()}_$idx.jpg")
+                        ctx.contentResolver.openInputStream(uri)?.use { input ->
+                            FileOutputStream(destFile).use { output ->
+                                input.copyTo(output)
+                            }
+                        } ?: return@runCatching null
+                        InstagramPost(
+                            id = (System.currentTimeMillis().toInt() and 0x0FFFFFFF) + idx,
+                            imageUrl = Uri.fromFile(destFile).toString(),
+                            caption = "Работа мастера • добавлено из галереи",
+                            originalUrl = null,
+                            dateStr = todayStr,
+                            likesCount = 0,
+                            username = author
+                        )
+                    }.getOrNull()
+                }
+            }
+            if (importedPosts.isNotEmpty()) {
+                _instagramError.value = null
+                val updated = importedPosts + _parsedInstagramPosts.value
+                _parsedInstagramPosts.value = updated
+                _selectedDisplayPostIds.value = updated.take(20).map { it.id }.toSet()
+            } else {
+                _instagramError.value = "Не удалось прочитать выбранные фотографии из галереи."
+            }
         }
     }
 
@@ -718,10 +720,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (current.contains(postId)) {
             _selectedImportPosts.value = current - postId
         } else {
-            if (current.size >= 20) {
-                // Max 20 posts allowed
-                return
-            }
+            if (current.size >= 20) return
             _selectedImportPosts.value = current + postId
         }
     }
@@ -729,7 +728,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun completeInstagramImportAndLoad() {
         val selectedIds = _selectedImportPosts.value
         val postsToImport = _instagramImportFeed.value.filter { it.id in selectedIds }
-        
+
         val limit = when (_subscriptionTier.value) {
             "free" -> 20
             "pro" -> 100
@@ -740,52 +739,79 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val currentList = _parsedInstagramPosts.value.toMutableList()
         val existingIds = currentList.map { it.id }.toSet()
         val uniqueNew = postsToImport.filter { it.id !in existingIds }
-        
+
         currentList.addAll(0, uniqueNew)
         val finalSelection = currentList.take(limit)
         _parsedInstagramPosts.value = finalSelection
-        
-        // Select up to 20 posts for display
         _selectedDisplayPostIds.value = finalSelection.take(20).map { it.id }.toSet()
     }
 
     fun completeOnboarding() {
         _isOnboarded.value = true
         saveProfiles()
+        syncUserProfileToCloud()
+    }
+
+    fun completeQuickStart(
+        role: String,
+        fallbackName: String = "",
+        fallbackEmail: String = ""
+    ) {
+        val cleanRole = if (role == "master") "master" else "client"
+        _onboardingRole.value = cleanRole
+        _userRole.value = cleanRole
+
+        if (cleanRole == "master") {
+            if (_registeredMasterProfile.value == null) {
+                val existing = savedMasterProfiles.value.firstOrNull()
+                if (existing != null) {
+                    _registeredMasterProfile.value = existing
+                } else {
+                    registerMasterProfile(
+                        name = fallbackName.ifBlank { "Мастер NailiX" },
+                        address = "Calella",
+                        schedule = "10:00 - 19:00",
+                        experience = 1,
+                        languages = listOf("Русский", "Español"),
+                        instagram = ""
+                    )
+                }
+            }
+        } else {
+            val resolvedName = _clientProfile.value.name.ifBlank { fallbackName }.ifBlank { "Клиент NailiX" }
+            val resolvedEmail = _clientProfile.value.email.ifBlank { fallbackEmail }
+            val resolvedCode = _clientProfile.value.referralCode.ifBlank {
+                if (currentUserId.isNotBlank() && cloudSyncRepository != null) {
+                    cloudSyncRepository.generateReferralCodeForUid(currentUserId)
+                } else {
+                    ""
+                }
+            }
+            val updated = _clientProfile.value.copy(
+                name = resolvedName,
+                email = resolvedEmail,
+                referralCode = resolvedCode
+            )
+            _clientProfile.value = updated
+            clientName.value = resolvedName
+        }
+
+        _isOnboarded.value = true
+        saveProfiles()
+        syncUserProfileToCloud()
     }
 
     fun resetOnboarding() {
         _isOnboarded.value = false
         val sysLang = Locale.getDefault().language.lowercase()
         val supportedLangs = setOf("en", "ru", "es", "zh", "hi", "ar", "pt", "fr", "he", "tr")
-        val resolvedLang = if (sysLang in supportedLangs) sysLang else "en"
-        _onboardingLanguage.value = resolvedLang
+        _onboardingLanguage.value = if (sysLang in supportedLangs) sysLang else "en"
         _onboardingStep.value = 0
         _onboardingAvatarUrl.value = null
         saveProfiles()
     }
 
-    fun quickStartAsGuest(role: String = "client") {
-        _userRole.value = role
-        _onboardingRole.value = role
-        if (role == "client") {
-            val defaultName = if (_onboardingLanguage.value == "ru") "Гость NailiX" else "NailiX Guest"
-            registerClientProfile(
-                name = defaultName,
-                phone = "+7 999 000-00-00",
-                homeAddr = "Calella Center",
-                workAddr = "Barcelona"
-            )
-        } else {
-            if (savedMasterProfiles.value.isNotEmpty()) {
-                activateMasterProfile(savedMasterProfiles.value.first().id)
-            }
-        }
-        _isOnboarded.value = true
-        saveProfiles()
-    }
-
-    fun addManualPortfolioPost(post: com.example.data.InstagramPost): Boolean {
+    fun addManualPortfolioPost(post: InstagramPost): Boolean {
         val limit = when (_subscriptionTier.value) {
             "free" -> 20
             "pro" -> 100
@@ -793,16 +819,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             else -> 20
         }
         val currentSize = _parsedInstagramPosts.value.size
-        if (currentSize >= limit) {
-            return false
-        }
+        if (currentSize >= limit) return false
         val current = _parsedInstagramPosts.value.toMutableList()
         current.add(0, post)
         _parsedInstagramPosts.value = current
         return true
     }
 
-    fun addNewPortfolioPost(post: com.example.data.InstagramPost) {
+    fun addNewPortfolioPost(post: InstagramPost) {
         addManualPortfolioPost(post)
     }
 
@@ -823,13 +847,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // Default Masters (empty by default - masters are created by users in onboarding)
-    private val defaultMasters = emptyList<MasterProfile>()
-
     private val _mastersList = MutableStateFlow<List<MasterProfile>>(emptyList())
     val mastersList: StateFlow<List<MasterProfile>> = _mastersList.asStateFlow()
 
-    // Clean user profile state (empty until created by user in onboarding)
     private val _clientProfile = MutableStateFlow(
         ClientProfile(
             name = "",
@@ -842,50 +862,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             homeLon = 2.6600,
             workAddress = "",
             workLat = 41.6160,
-            workLon = 2.6630
+            workLon = 2.6630,
+            referralCode = ""
         )
     )
     val clientProfile: StateFlow<ClientProfile> = _clientProfile.asStateFlow()
 
-    // User's Registered Master Profile
     private val _registeredMasterProfile = MutableStateFlow<MasterProfile?>(null)
     val registeredMasterProfile: StateFlow<MasterProfile?> = _registeredMasterProfile.asStateFlow()
 
-    // Initial Reviews database
-    private val defaultReviews = listOf(
-        AggregatorReview(1, "1", "master", "Мария Резникова", 5, "Лучший мастер в Каталонии! Рисунки просто невероятные, настоящие произведения искусства. Очень приятная атмосфера у Виктории в студии.", "05.07.2026"),
-        AggregatorReview(2, "1", "master", "Анна Смирнова", 5, "Очень аккуратный маникюр с зеркальным хромом. Держится уже 4 недели идеально! Всем рекомендую.", "02.07.2026"),
-        AggregatorReview(3, "1", "master", "Ирина Белова", 5, "Тончайшие линии ручной росписи, рисует словно принтер! Обожаю её работы.", "29.06.2026"),
-        AggregatorReview(4, "2", "master", "Ольга Петрова", 5, "Шикарный смарт-педикюр! Пяточки нежные, как у младенца. Очень рекомендую Елену.", "04.07.2026"),
-        AggregatorReview(5, "2", "master", "Татьяна Соколова", 4, "Быстро и качественно, очень приятная мастер. Обязательно вернусь.", "01.07.2026")
-    )
-
-    private val _reviewsList = MutableStateFlow<List<AggregatorReview>>(defaultReviews)
+    private val _reviewsList = MutableStateFlow<List<AggregatorReview>>(emptyList())
     val reviewsList: StateFlow<List<AggregatorReview>> = _reviewsList.asStateFlow()
 
-    // Escrow payment state during checkout
-    private val _escrowCheckoutBooking = MutableStateFlow<Booking?>(null)
-    val escrowCheckoutBooking: StateFlow<Booking?> = _escrowCheckoutBooking.asStateFlow()
+    // Honest studio booking confirmation sheet state (no fake escrow card inputs)
+    private val _pendingConfirmationBooking = MutableStateFlow<Booking?>(null)
+    val pendingConfirmationBooking: StateFlow<Booking?> = _pendingConfirmationBooking.asStateFlow()
 
-    // Fee Waiver Unlocked (Exchange 400 pts for 0% commission)
     private val _feeWaiverUnlocked = MutableStateFlow(false)
     val feeWaiverUnlocked: StateFlow<Boolean> = _feeWaiverUnlocked.asStateFlow()
 
     init {
-        // Automatically check current system language settings
         val sysLang = Locale.getDefault().language.lowercase()
         val supportedLangs = setOf("en", "ru", "es", "zh", "hi", "ar", "pt", "fr", "he", "tr")
-        val resolvedLang = if (sysLang in supportedLangs) sysLang else "en"
-        _onboardingLanguage.value = resolvedLang
+        _onboardingLanguage.value = if (sysLang in supportedLangs) sysLang else "en"
 
-        // Splash auto-dismiss timer (4 seconds)
         viewModelScope.launch {
-            kotlinx.coroutines.delay(4000)
+            delay(2500)
             _showSplash.value = false
         }
 
         loadProfiles()
-        loadCustomAds()
 
         viewModelScope.launch {
             repository.ensureLoyaltyInitialized()
@@ -894,21 +900,269 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             repository.ensureMasterNailArtsInitialized()
             generateVotingPair()
         }
+
+        if (currentUserId.isNotBlank() && cloudSyncRepository != null) {
+            attachCloudListeners(currentUserId, cloudSyncRepository)
+        }
     }
 
-    // Math calculation for walking distance in meters (Haversine formula)
+    private val bookingCloudDocIds = mutableMapOf<Int, String>()
+
+    private fun attachCloudListeners(uid: String, cloud: CloudSyncRepository) {
+        viewModelScope.launch {
+            cloud.observeUserProfile(uid)
+                .catch { /* logged by CloudSyncRepository */ }
+                .collect { cloudProfile ->
+                    if (cloudProfile != null) {
+                        val updatedClient = _clientProfile.value.copy(
+                            name = _clientProfile.value.name.ifBlank { cloudProfile.displayName },
+                            phone = _clientProfile.value.phone.ifBlank { cloudProfile.phone },
+                            email = _clientProfile.value.email.ifBlank { cloudProfile.email },
+                            referralCode = cloudProfile.referralCode.ifBlank {
+                                cloud.generateReferralCodeForUid(uid)
+                            }
+                        )
+                        _clientProfile.value = updatedClient
+                        if (clientName.value.isBlank()) clientName.value = updatedClient.name
+                        if (clientPhone.value.isBlank()) clientPhone.value = updatedClient.phone
+                    }
+                }
+        }
+
+        viewModelScope.launch {
+            cloud.observePublicMasters()
+                .catch { /* logged by CloudSyncRepository */ }
+                .collect { cloudMasters ->
+                    if (cloudMasters.isNotEmpty()) {
+                        val localList = savedMasterProfiles.value
+                        val merged = localList.toMutableList()
+                        cloudMasters.forEachIndexed { index, cm ->
+                            val resolvedLat = cm.lat ?: 41.6150
+                            val resolvedLon = cm.lon ?: 2.6620
+                            val existingIndex = merged.indexOfFirst {
+                                it.name.equals(cm.name, ignoreCase = true) &&
+                                    it.instagramUsername.equals(cm.instagramUsername, ignoreCase = true)
+                            }
+                            if (existingIndex == -1) {
+                                merged.add(
+                                    MasterProfile(
+                                        id = 5000 + index,
+                                        name = cm.name,
+                                        address = cm.address,
+                                        lat = resolvedLat,
+                                        lon = resolvedLon,
+                                        workingSchedule = cm.workingSchedule,
+                                        experienceYears = cm.experienceYears.toInt(),
+                                        languages = cm.languages,
+                                        instagramUsername = cm.instagramUsername,
+                                        rating = cm.ratingAvg,
+                                        ratingCount = cm.ratingCount.toInt(),
+                                        isUserCreated = cm.userId == uid,
+                                        currency = cm.currency,
+                                        ownerUid = cm.userId
+                                    )
+                                )
+                            } else {
+                                val curr = merged[existingIndex]
+                                merged[existingIndex] = curr.copy(
+                                    ownerUid = curr.ownerUid.ifBlank { cm.userId },
+                                    lat = cm.lat ?: curr.lat,
+                                    lon = cm.lon ?: curr.lon
+                                )
+                            }
+                        }
+                        _mastersList.value = merged
+                    }
+                }
+        }
+
+        viewModelScope.launch {
+            cloud.observePublicServices()
+                .catch { /* logged by CloudSyncRepository */ }
+                .collect { cloudServices ->
+                    if (cloudServices.isNotEmpty()) {
+                        val existing = repository.serviceDao.getAllServicesDirect()
+                        cloudServices.forEach { cs ->
+                            val match = existing.any {
+                                it.name.equals(cs.name, ignoreCase = true) &&
+                                    it.category.equals(cs.category, ignoreCase = true)
+                            }
+                            if (!match) {
+                                repository.serviceDao.insertService(
+                                    ServiceEntity(
+                                        name = cs.name,
+                                        category = cs.category,
+                                        price = cs.price,
+                                        durationMin = cs.durationMin.toInt(),
+                                        description = cs.description,
+                                        imageUrl = cs.imageUrl
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+        }
+
+        viewModelScope.launch {
+            cloud.observePublicNailArts()
+                .catch { /* logged by CloudSyncRepository */ }
+                .collect { cloudArts ->
+                    if (cloudArts.isNotEmpty()) {
+                        val existing = repository.masterNailArtDao.getAllMasterNailArtsDirect()
+                        cloudArts.forEach { ca ->
+                            val match = existing.any {
+                                it.title.equals(ca.title, ignoreCase = true) &&
+                                    it.masterName.equals(ca.masterName, ignoreCase = true)
+                            }
+                            if (!match) {
+                                repository.masterNailArtDao.insertMasterNailArt(
+                                    MasterNailArtEntity(
+                                        title = ca.title,
+                                        masterName = ca.masterName,
+                                        complexity = ca.complexity,
+                                        extraPrice = ca.extraPrice,
+                                        imageUrl = ca.imageUrl,
+                                        likes = ca.likes.toInt(),
+                                        views = ca.views.toInt(),
+                                        description = ca.description
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+        }
+
+        viewModelScope.launch {
+            combine(
+                cloud.observeClientBookings(uid).catch { emit(emptyList()) },
+                cloud.observeMasterBookings(uid).catch { emit(emptyList()) }
+            ) { clientList, masterList ->
+                (clientList + masterList).distinctBy { it.id }
+            }.collect { cloudBookings ->
+                cloudBookings.forEach { cb ->
+                    val localMatch = bookings.value.find { local ->
+                        val docId = bookingCloudDocIds[local.id]
+                        (docId != null && docId == cb.id) ||
+                            (local.serviceName.equals(cb.serviceName, ignoreCase = true) &&
+                                local.date == cb.date &&
+                                local.timeSlot == cb.timeSlot &&
+                                local.clientPhone == cb.clientPhone)
+                    }
+                    if (localMatch == null) {
+                        val insertedId = repository.bookingDao.insertBooking(
+                            Booking(
+                                serviceName = cb.serviceName,
+                                serviceCategory = cb.serviceCategory,
+                                date = cb.date,
+                                timeSlot = cb.timeSlot,
+                                masterName = cb.masterName,
+                                price = cb.price,
+                                clientName = cb.clientName,
+                                clientPhone = cb.clientPhone,
+                                status = cb.status
+                            )
+                        ).toInt()
+                        if (cb.id.isNotBlank()) {
+                            bookingCloudDocIds[insertedId] = cb.id
+                        }
+                    } else {
+                        if (cb.id.isNotBlank()) {
+                            bookingCloudDocIds[localMatch.id] = cb.id
+                        }
+                        if (localMatch.status != cb.status) {
+                            repository.bookingDao.updateBookingStatus(localMatch.id, cb.status)
+                        }
+                        if (localMatch.date != cb.date || localMatch.timeSlot != cb.timeSlot) {
+                            repository.bookingDao.updateBookingSchedule(localMatch.id, cb.date, cb.timeSlot)
+                        }
+                    }
+                }
+            }
+        }
+
+        viewModelScope.launch {
+            cloud.observePublicReviews()
+                .catch { /* logged by CloudSyncRepository */ }
+                .collect { cloudReviews ->
+                    if (cloudReviews.isNotEmpty()) {
+                        _reviewsList.value = cloudReviews.mapIndexed { idx, cr ->
+                            AggregatorReview(
+                                id = idx + 1,
+                                targetId = cr.targetId,
+                                targetType = cr.targetType,
+                                authorName = cr.authorName,
+                                rating = cr.rating.toInt(),
+                                comment = cr.comment,
+                                dateStr = cr.dateStr
+                            )
+                        }
+                    }
+                }
+        }
+    }
+
+    private fun syncUserProfileToCloud() {
+        val cloud = cloudSyncRepository ?: return
+        if (currentUserId.isBlank()) return
+        val client = _clientProfile.value
+        val loyalty = loyaltyInfo.value
+        viewModelScope.launch {
+            try {
+                cloud.upsertUserProfile(
+                    displayName = client.name.ifBlank { clientName.value }.ifBlank { "NailiX User" },
+                    role = _userRole.value,
+                    loyaltyPoints = loyalty?.points ?: 150,
+                    loyaltyLevel = loyalty?.level ?: "Silver",
+                    friendsReferred = loyalty?.friendsReferred ?: 0,
+                    homeAddress = client.homeAddress,
+                    workAddress = client.workAddress,
+                    phone = client.phone.ifBlank { clientPhone.value },
+                    email = client.email,
+                    preferredSkin = _selectedSkin.value,
+                    preferredCurrency = _globalCurrency.value,
+                    preferredLanguage = _onboardingLanguage.value,
+                    fcmToken = FcmNotificationManager.fcmToken.value.takeIf { it.length > 40 }
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // Logged inside CloudSyncRepository
+            }
+        }
+    }
+
+    private fun publishMasterToCloud(master: MasterProfile) {
+        val cloud = cloudSyncRepository ?: return
+        if (currentUserId.isBlank()) return
+        viewModelScope.launch {
+            cloud.publishMasterProfile(
+                masterDocId = "master_${currentUserId}_${master.id}",
+                name = master.name,
+                address = master.address,
+                schedule = master.workingSchedule,
+                experienceYears = master.experienceYears,
+                languages = master.languages,
+                instagram = master.instagramUsername,
+                currency = master.currency,
+                lat = master.lat,
+                lon = master.lon
+            )
+        }
+    }
+
     fun calculateDistanceMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Int {
-        val earthRadius = 6371000.0 // meters
+        val earthRadius = 6371000.0
         val dLat = Math.toRadians(lat2 - lat1)
         val dLon = Math.toRadians(lon2 - lon1)
-        val a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-                Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) *
-                Math.sin(dLon / 2) * Math.sin(dLon / 2)
-        val c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+        val a = sin(dLat / 2) * sin(dLat / 2) +
+            cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) *
+            sin(dLon / 2) * sin(dLon / 2)
+        val c = 2 * atan2(sqrt(a), sqrt(1 - a))
         return (earthRadius * c).toInt()
     }
 
-    // Update client home and work addresses and coordinates
     fun updateClientLocations(
         homeAddr: String,
         homeLat: Double,
@@ -925,9 +1179,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             workLat = workLat,
             workLon = workLon
         )
+        saveProfiles()
+        syncUserProfileToCloud()
     }
 
-    // Custom Master Registration Flow
     fun registerMasterProfile(
         name: String,
         address: String,
@@ -938,28 +1193,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         currency: String = "EUR"
     ) {
         val newId = (savedMasterProfiles.value.maxOfOrNull { it.id } ?: 100) + 1
+        val cleanInsta = instagram.trim().removePrefix("@")
         val newMaster = MasterProfile(
             id = newId,
             name = name,
             address = address,
-            lat = 41.6150 + (0.001 * (-2..2).random()), // simulated nearby coordinate
-            lon = 2.6620 + (0.001 * (-2..2).random()),
+            lat = 41.6150,
+            lon = 2.6620,
             workingSchedule = schedule.ifEmpty { "Пн-Пт: 09:00 - 18:00" },
             experienceYears = experience,
             languages = languages.ifEmpty { listOf("Испанский") },
-            instagramUsername = instagram.ifEmpty { "new_nail_artist" },
+            instagramUsername = cleanInsta,
             rating = 5.0,
             ratingCount = 1,
             isUserCreated = true,
-            currency = currency
+            currency = currency,
+            ownerUid = currentUserId
         )
         _registeredMasterProfile.value = newMaster
         _userRole.value = "master"
-        _instagramUsername.value = instagram.ifEmpty { "new_nail_artist" }
-        triggerInstagramParsing()
+        if (cleanInsta.isNotBlank()) {
+            _instagramUsername.value = cleanInsta
+        }
 
         val currentList = savedMasterProfiles.value.toMutableList()
-        val index = currentList.indexOfFirst { it.instagramUsername.equals(instagram, ignoreCase = true) }
+        val index = currentList.indexOfFirst {
+            cleanInsta.isNotBlank() && it.instagramUsername.equals(cleanInsta, ignoreCase = true)
+        }
         if (index != -1) {
             currentList[index] = newMaster
         } else {
@@ -971,6 +1231,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             primaryMasterId.value = newId
         }
         saveProfiles()
+        publishMasterToCloud(newMaster)
+        syncUserProfileToCloud()
+        geocodeMasterAddressAsync(newMaster.id, address)
+    }
+
+    private fun geocodeMasterAddressAsync(masterId: Int, address: String) {
+        if (address.isBlank()) return
+        viewModelScope.launch {
+            com.example.util.LocationGeocoderHelper.geocodeAddress(getApplication(), address)
+                .onSuccess { (resolvedLat, resolvedLon) ->
+                    val list = savedMasterProfiles.value.toMutableList()
+                    val idx = list.indexOfFirst { it.id == masterId }
+                    if (idx != -1) {
+                        val updated = list[idx].copy(lat = resolvedLat, lon = resolvedLon)
+                        list[idx] = updated
+                        savedMasterProfiles.value = list
+                        _mastersList.value = list
+                        if (_registeredMasterProfile.value?.id == masterId) {
+                            _registeredMasterProfile.value = updated
+                        }
+                        saveProfiles()
+                        publishMasterToCloud(updated)
+                    }
+                }
+        }
     }
 
     fun updateMasterSchedule(schedule: String) {
@@ -984,6 +1269,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             savedMasterProfiles.value = currentList
             _mastersList.value = currentList
             saveProfiles()
+            publishMasterToCloud(updated)
         }
     }
 
@@ -1002,7 +1288,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             workingSchedule = schedule.ifBlank { current.workingSchedule },
             languages = languages.ifEmpty { current.languages },
             instagramUsername = instagram.trim().removePrefix("@").ifBlank { current.instagramUsername },
-            currency = currency
+            currency = currency,
+            ownerUid = current.ownerUid.ifBlank { currentUserId }
         )
         _registeredMasterProfile.value = updated
         _instagramUsername.value = updated.instagramUsername
@@ -1013,6 +1300,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             savedMasterProfiles.value = currentList
             _mastersList.value = currentList
             saveProfiles()
+            publishMasterToCloud(updated)
+            geocodeMasterAddressAsync(updated.id, updated.address)
         }
     }
 
@@ -1023,63 +1312,72 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // ----------------------------------------------------
-    // SOVEREIGN ONION NODE & SIMPLEX MQ INTEGRATION
+    // SOVEREIGN ONION NODE & LOCAL SNAPSHOTS
     // ----------------------------------------------------
-    val sovereignNodeStatus = com.example.data.SovereignNodeManager.nodeStatus
-    val simplexQueue = com.example.data.SovereignNodeManager.simplexQueue
-    val simplexMessages = com.example.data.SovereignNodeManager.simplexMessages
-    val p2pSyncState = com.example.data.SovereignNodeManager.p2pSyncState
-    val roiCalc = com.example.data.SovereignNodeManager.roiCalc
+    val sovereignNodeStatus = SovereignNodeManager.nodeStatus
+    val simplexQueue = SovereignNodeManager.simplexQueue
+    val simplexMessages = SovereignNodeManager.simplexMessages
+    val p2pSyncState = SovereignNodeManager.p2pSyncState
+    val roiCalc = SovereignNodeManager.roiCalc
 
     fun pingSovereignNode() {
         viewModelScope.launch {
-            com.example.data.SovereignNodeManager.pingNode()
+            SovereignNodeManager.pingNode()
         }
     }
 
     fun toggleTorRouting(enabled: Boolean) {
-        com.example.data.SovereignNodeManager.toggleTorRouting(enabled)
+        SovereignNodeManager.toggleTorRouting(enabled)
     }
 
     fun updateNodeAddress(onion: String, local: String) {
-        com.example.data.SovereignNodeManager.updateNodeAddress(onion, local)
+        SovereignNodeManager.updateNodeAddress(onion, local)
     }
 
-    fun triggerP2PSync() {
+    fun computeRoomStateSnapshot() {
         viewModelScope.launch {
-            com.example.data.SovereignNodeManager.triggerP2PSync()
+            SovereignNodeManager.computeRoomStateSnapshot(
+                bookings = bookings.value,
+                services = services.value,
+                nailArts = masterNailArts.value
+            )
         }
     }
 
     fun updateRoiParams(masters: Int, fee: Double, aiGens: Int) {
-        com.example.data.SovereignNodeManager.updateRoiParams(masters, fee, aiGens)
+        SovereignNodeManager.updateRoiParams(masters, fee, aiGens)
     }
 
-    fun exportEncryptedBackup(): String {
-        return com.example.data.SovereignNodeManager.exportEncryptedBackupJson()
-    }
-
-    // ----------------------------------------------------
-    // FIREBASE CLOUD MESSAGING (FCM) NOTIFICATIONS
-    // ----------------------------------------------------
-    val fcmToken = com.example.notification.FcmNotificationManager.fcmToken
-    val fcmNotifications = com.example.notification.FcmNotificationManager.notifications
-
-    fun sendTestFcmAppointmentReminder(context: android.content.Context) {
-        val master = _registeredMasterProfile.value?.name ?: "Виктория"
-        com.example.notification.FcmNotificationManager.showSystemNotification(
-            context = context,
-            title = "Напоминание о записи 💅",
-            body = "Здравствуйте! Ждем вас завтра в 15:00 на сеанс в студии NailiX. Мастер: $master. До встречи!",
-            type = "appointment_reminder",
-            data = mapOf("date" to "Завтра", "time" to "15:00", "master" to master)
+    fun exportSnapshotJson(): String {
+        return SovereignNodeManager.exportSnapshotJson(
+            bookings = bookings.value,
+            services = services.value,
+            nailArts = masterNailArts.value
         )
     }
 
-    fun sendTestFcmPromotion(context: android.content.Context, title: String, text: String, promoCode: String) {
-        val finalTitle = title.ifBlank { "Специальная акция от NailiX 🎁" }
-        val finalText = text.ifBlank { "Скидка -20% на маникюр и дизайн по промокоду $promoCode!" }
-        com.example.notification.FcmNotificationManager.showSystemNotification(
+    // ----------------------------------------------------
+    // FIREBASE CLOUD MESSAGING & WORKMANAGER NOTIFICATIONS
+    // ----------------------------------------------------
+    val fcmToken = FcmNotificationManager.fcmToken
+    val fcmError = FcmNotificationManager.fcmError
+    val fcmNotifications = FcmNotificationManager.notifications
+
+    fun sendFcmAppointmentReminder(context: Context) {
+        val master = _registeredMasterProfile.value?.name ?: "Мастер NailiX"
+        FcmNotificationManager.showSystemNotification(
+            context = context,
+            title = "Напоминание о записи 💅",
+            body = "Ждем вас на сеанс в студии NailiX. Мастер: $master.",
+            type = "appointment_reminder",
+            data = mapOf("master" to master)
+        )
+    }
+
+    fun sendFcmPromotion(context: Context, title: String, text: String, promoCode: String) {
+        val finalTitle = title.ifBlank { "Акция от NailiX 🎁" }
+        val finalText = text.ifBlank { "Спецпредложение по промокоду $promoCode!" }
+        FcmNotificationManager.showSystemNotification(
             context = context,
             title = finalTitle,
             body = finalText,
@@ -1088,22 +1386,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
-    // Custom Client Registration Flow
     fun registerClientProfile(
         name: String,
         phone: String,
         homeAddr: String,
         workAddr: String
     ) {
+        val resolvedCode = _clientProfile.value.referralCode.ifBlank {
+            if (currentUserId.isNotBlank() && cloudSyncRepository != null) {
+                cloudSyncRepository.generateReferralCodeForUid(currentUserId)
+            } else {
+                ""
+            }
+        }
         val newProfile = _clientProfile.value.copy(
             name = name,
             phone = phone,
             homeAddress = homeAddr,
             workAddress = workAddr,
-            homeLat = 41.6140 + (0.0008 * (-1..1).random()),
-            homeLon = 2.6600 + (0.0008 * (-1..1).random()),
-            workLat = 41.6160 + (0.0008 * (-1..1).random()),
-            workLon = 2.6630 + (0.0008 * (-1..1).random())
+            homeLat = 41.6140,
+            homeLon = 2.6600,
+            workLat = 41.6160,
+            workLon = 2.6630,
+            referralCode = resolvedCode
         )
         _clientProfile.value = newProfile
         clientName.value = name
@@ -1121,9 +1426,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             primaryClientPhone.value = phone
         }
         saveProfiles()
+        syncUserProfileToCloud()
     }
 
-    // Leave feedback review for Master or Client
     fun leaveFeedback(
         targetId: String,
         targetType: String,
@@ -1132,18 +1437,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         author: String
     ) {
         val nextId = _reviewsList.value.size + 1
+        val dateStr = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(Date())
+        val finalAuthor = author.ifEmpty { "Гость NailiX" }
         val newReview = AggregatorReview(
             id = nextId,
             targetId = targetId,
             targetType = targetType,
-            authorName = author.ifEmpty { "Анонимный гость" },
+            authorName = finalAuthor,
             rating = rating,
             comment = comment,
-            dateStr = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(Date())
+            dateStr = dateStr
         )
         _reviewsList.value = _reviewsList.value + newReview
 
-        // Recompute Target Master/Client ratings dynamically in state!
+        if (currentUserId.isNotBlank() && cloudSyncRepository != null) {
+            viewModelScope.launch {
+                cloudSyncRepository.createReview(
+                    targetId = targetId,
+                    targetType = targetType,
+                    authorName = finalAuthor,
+                    rating = rating,
+                    comment = comment,
+                    dateStr = dateStr
+                )
+            }
+        }
+
         if (targetType == "master") {
             val masterId = targetId.toIntOrNull() ?: return
             _mastersList.value = _mastersList.value.map { master ->
@@ -1156,7 +1475,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 } else master
             }
-            // Update selected user master state if match
             val currentRegistered = _registeredMasterProfile.value
             if (currentRegistered != null && currentRegistered.id == masterId) {
                 val totalRatingSum = (currentRegistered.rating * currentRegistered.ratingCount) + rating
@@ -1179,11 +1497,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // Swap Bonus points to unlock Platform Fee Waiver
     fun exchangePointsForFeeWaiver(): Boolean {
         val loyalty = loyaltyInfo.value ?: return false
         val rating = _clientProfile.value.rating
-        
+
         if (loyalty.points < 400) {
             viewModelScope.launch {
                 _referralMessage.emit("Недостаточно баллов! Требуется 400 баллов (у вас ${loyalty.points}).")
@@ -1192,22 +1509,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         if (rating < 4.8) {
             viewModelScope.launch {
-                _referralMessage.emit("Слишком низкий рейтинг доверия! Требуется идеально чистая репутация и рейтинг 4.8+ (у вас $rating).")
+                _referralMessage.emit("Требуется рейтинг 4.8+ (у вас $rating).")
             }
             return false
         }
 
         viewModelScope.launch {
-            val updatedLoyalty = loyalty.copy(points = loyalty.points - 400)
-            repository.loyaltyDao.insertOrUpdateLoyalty(updatedLoyalty)
+            repository.spendBonusPoints(400, "Активация льготного статуса 0% комиссии")
             _feeWaiverUnlocked.value = true
-            _referralMessage.emit("Поздравляем! 🎉 0% комиссия сервиса успешно активирована благодаря вашей идеальной репутации и баллам!")
+            syncUserProfileToCloud()
+            _referralMessage.emit("Поздравляем! 🎉 Льготный статус 0% комиссии успешно активирован!")
         }
         return true
     }
 
-    // Start booking process (opens escrow payment sheet)
-    fun requestBookingEscrowCheckout() {
+    fun requestBookingConfirmation() {
         val service = _selectedService.value ?: return
         val master = _selectedMaster.value ?: return
         val date = _selectedDate.value ?: return
@@ -1215,7 +1531,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val name = clientName.value.trim().ifEmpty { _clientProfile.value.name }
         val phone = clientPhone.value.trim().ifEmpty { _clientProfile.value.phone }
 
-        val previewBooking = Booking(
+        _pendingConfirmationBooking.value = Booking(
             serviceName = service.name,
             serviceCategory = service.category,
             date = date,
@@ -1225,29 +1541,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             clientName = name,
             clientPhone = phone
         )
-        _escrowCheckoutBooking.value = previewBooking
     }
 
-    fun dismissEscrowCheckout() {
-        _escrowCheckoutBooking.value = null
+    fun dismissBookingConfirmation() {
+        _pendingConfirmationBooking.value = null
     }
 
-    // Finalize booking after 20% deposit payment
-    fun payEscrowAndCompleteBooking() {
-        val booking = _escrowCheckoutBooking.value ?: return
+    fun confirmStudioBooking(paymentMethod: String = "studio_visit") {
+        val booking = _pendingConfirmationBooking.value ?: return
         viewModelScope.launch {
             _bookingLoading.value = true
-            delay(1500) // Simulated checkout processing
-
             val newId = repository.insertBooking(booking)
             val savedBooking = booking.copy(id = newId.toInt())
 
-            // Create notification alerts
+            val paymentLabel = if (paymentMethod == "studio_transfer") {
+                "Перевод по реквизитам студии"
+            } else {
+                "Оплата при визите в студии"
+            }
+
             repository.addReminder(
                 Reminder(
                     bookingId = savedBooking.id,
-                    title = "Депозит Escrow (20%) зачислен! 🔒",
-                    message = "Внесено гарантированное обеспечение за услугу '${savedBooking.serviceName}' у мастера ${savedBooking.masterName}.",
+                    title = "Запись подтверждена ($paymentLabel) ✅",
+                    message = "Услуга '${savedBooking.serviceName}' у мастера ${savedBooking.masterName} (${savedBooking.date}, ${savedBooking.timeSlot}).",
                     triggerTimeBefore = "Сразу"
                 )
             )
@@ -1260,19 +1577,51 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
             )
 
-            // Clear selected fields
+            // Real WorkManager reminder scheduling (24 hours / 1440 min ahead; or shortly for immediate testing if same day)
+            FcmNotificationManager.scheduleBookingReminder(
+                context = getApplication(),
+                title = "Скоро визит в NailiX 💅",
+                body = "Напоминаем: ${savedBooking.serviceName} у мастера ${savedBooking.masterName} (${savedBooking.date}, ${savedBooking.timeSlot}).",
+                delayMinutes = 1440L
+            )
+
+            SovereignNodeManager.recordLocalBookingEvent(
+                bookingId = savedBooking.id,
+                serviceName = savedBooking.serviceName,
+                clientName = savedBooking.clientName,
+                date = savedBooking.date,
+                time = savedBooking.timeSlot
+            )
+
+            if (currentUserId.isNotBlank() && cloudSyncRepository != null) {
+                val ticketToken = VisitTicketCryptoManager.generateSecurityToken(savedBooking)
+                val targetMasterUid = _mastersList.value
+                    .find { it.name.equals(savedBooking.masterName, ignoreCase = true) }
+                    ?.ownerUid
+                    ?.takeIf { it.isNotBlank() }
+                val cloudDocId = "bk_${currentUserId}_${savedBooking.id}"
+                bookingCloudDocIds[savedBooking.id] = cloudDocId
+                cloudSyncRepository.createBooking(
+                    bookingDocId = cloudDocId,
+                    booking = savedBooking,
+                    ticketToken = ticketToken,
+                    paymentMethod = paymentMethod,
+                    masterUid = targetMasterUid
+                )
+                syncUserProfileToCloud()
+            }
+
             _selectedService.value = null
             _selectedMaster.value = null
             _selectedDate.value = null
             _selectedTimeSlot.value = null
-            _escrowCheckoutBooking.value = null
+            _pendingConfirmationBooking.value = null
             _bookingSuccessDialog.value = savedBooking
             _bookingLoading.value = false
         }
     }
 
     // Active screen navigation
-    // "home", "booking", "designs", "loyalty", "portfolio"
     private val _currentTab = MutableStateFlow("home")
     val currentTab: StateFlow<String> = _currentTab.asStateFlow()
 
@@ -1280,17 +1629,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _currentTab.value = tab
     }
 
-    // Admin Mode toggle and sync status
     val isAdminMode = MutableStateFlow(false)
     val isSyncing = MutableStateFlow(false)
     val ownerSyncStatus = MutableStateFlow("Синхронизировано")
 
-    // Exposed Flows from Repository
     val bookings: StateFlow<List<Booking>> = repository.allBookings
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val loyaltyInfo: StateFlow<UserLoyalty?> = repository.loyaltyState
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     val reminders: StateFlow<List<Reminder>> = repository.allReminders
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -1299,9 +1646,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         .map { list -> list.map { it.designId } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    // Dynamic Price List Services flow from Room
     val services: StateFlow<List<ServiceItem>> = repository.dynamicServices
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val referredFriends: StateFlow<List<ReferredFriend>> = repository.allReferredFriends
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -1309,10 +1655,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val loyaltyTransactions: StateFlow<List<LoyaltyTransaction>> = repository.allLoyaltyTransactions
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val masterNailArts: StateFlow<List<com.example.data.MasterNailArtEntity>> = repository.allMasterNailArts
+    val masterNailArts: StateFlow<List<MasterNailArtEntity>> = repository.allMasterNailArts
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val selectedNailArtForBooking = MutableStateFlow<com.example.data.MasterNailArtEntity?>(null)
+    val selectedNailArtForBooking = MutableStateFlow<MasterNailArtEntity?>(null)
 
     fun likeMasterNailArt(id: Int) {
         viewModelScope.launch {
@@ -1326,9 +1672,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun publishMasterNailArt(title: String, masterName: String, complexity: String, extraPrice: Double, imageUrl: String, description: String) {
+    fun publishMasterNailArt(
+        title: String,
+        masterName: String,
+        complexity: String,
+        extraPrice: Double,
+        imageUrl: String,
+        description: String
+    ) {
         viewModelScope.launch {
-            val entity = com.example.data.MasterNailArtEntity(
+            val entity = MasterNailArtEntity(
                 title = title,
                 masterName = masterName,
                 complexity = complexity,
@@ -1336,16 +1689,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 imageUrl = imageUrl,
                 description = description
             )
-            repository.masterNailArtDao.insertMasterNailArt(entity)
+            val id = repository.masterNailArtDao.insertMasterNailArt(entity)
+            if (currentUserId.isNotBlank() && cloudSyncRepository != null) {
+                cloudSyncRepository.publishNailArt(
+                    artDocId = "art_${currentUserId}_$id",
+                    title = title,
+                    masterName = masterName,
+                    complexity = complexity,
+                    extraPrice = extraPrice,
+                    imageUrl = imageUrl,
+                    description = description
+                )
+            }
         }
     }
 
-    // Compile customer profile list dynamically from Database
     val clientProfiles: StateFlow<List<ClientProfile>> = combine(
         bookings, loyaltyInfo
     ) { bookingList, loyalty ->
         val map = mutableMapOf<String, ClientProfile>()
-        
+
         bookingList.forEach { booking ->
             val existing = map[booking.clientPhone]
             if (existing == null) {
@@ -1362,7 +1725,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
         }
-        
+
         if (loyalty != null && loyalty.isMailingSubscribed && loyalty.subscribedPhone != null) {
             val phone = loyalty.subscribedPhone
             val existing = map[phone]
@@ -1380,23 +1743,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
         }
-        
+
         map.values.toList().sortedByDescending { it.totalSpent }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    // Compile analytical statistics
     val statistics: StateFlow<AdminStats> = bookings.map { list ->
         val confirmed = list.filter { it.status != "Отменена" }
         val revenue = confirmed.sumOf { it.price }
         val activeCount = list.filter { it.status == "Подтверждена" }.size
         val completedCount = list.filter { it.status == "Выполнена" }.size
-        
-        val categoryPopularity = confirmed.groupBy { it.serviceCategory }
-            .mapValues { it.value.size }
+
+        val categoryPopularity = confirmed.groupBy { it.serviceCategory }.mapValues { it.value.size }
         val popularCategory = categoryPopularity.maxByOrNull { it.value }?.key ?: "Нет"
-        
-        val masterPopularity = confirmed.groupBy { it.masterName }
-            .mapValues { it.value.size }
+
+        val masterPopularity = confirmed.groupBy { it.masterName }.mapValues { it.value.size }
         val topMaster = masterPopularity.maxByOrNull { it.value }?.key ?: "Нет"
 
         AdminStats(
@@ -1439,104 +1799,115 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun selectTimeSlot(slot: String?) { _selectedTimeSlot.value = slot }
     fun dismissSuccessDialog() { _bookingSuccessDialog.value = null }
 
-    fun submitBooking() {
-        val service = _selectedService.value ?: return
-        val master = _selectedMaster.value ?: return
-        val date = _selectedDate.value ?: return
-        val slot = _selectedTimeSlot.value ?: return
-        val name = clientName.value.trim()
-        val phone = clientPhone.value.trim()
-
-        if (name.isEmpty() || phone.isEmpty()) return
-
-        viewModelScope.launch {
-            _bookingLoading.value = true
-            delay(1500) // Realistic delay
-
-            val newBooking = Booking(
-                serviceName = service.name,
-                serviceCategory = service.category,
-                date = date,
-                timeSlot = slot,
-                masterName = master,
-                price = service.price,
-                clientName = name,
-                clientPhone = phone
-            )
-
-            val newId = repository.insertBooking(newBooking)
-            val savedBooking = newBooking.copy(id = newId.toInt())
-            
-            // Automatically queue reminder simulation notifications for the client!
-            val currentLang = _onboardingLanguage.value
-            val reminderTitle1 = if (currentLang == "ru") "Напоминание о визите 💅" else if (currentLang == "es") "Recordatorio de visita 💅" else "Appointment Reminder 💅"
-            val reminderMsg1 = if (currentLang == "ru") {
-                "Студия NailiX ждет вас завтра в ${savedBooking.timeSlot} на услугу '${savedBooking.serviceName}' к мастеру ${savedBooking.masterName}!"
-            } else if (currentLang == "es") {
-                "¡El salón NailiX te espera mañana a las ${savedBooking.timeSlot} para el servicio '${savedBooking.serviceName}' con ${savedBooking.masterName}!"
-            } else {
-                "NailiX is waiting for you tomorrow at ${savedBooking.timeSlot} for the '${savedBooking.serviceName}' service with ${savedBooking.masterName}!"
-            }
-
-            val reminderTitle2 = if (currentLang == "ru") "Скоро запись! ✨" else if (currentLang == "es") "¡Tu cita pronto! ✨" else "Upcoming appointment! ✨"
-            val reminderMsg2 = if (currentLang == "ru") {
-                "Напоминаем: у вас запись сегодня в ${savedBooking.timeSlot} на '${savedBooking.serviceName}'. Адрес: Испания, Каталония, г. Калейя, ул. Moragas, д. 74."
-            } else if (currentLang == "es") {
-                "Recuerda: tienes una cita hoy a las ${savedBooking.timeSlot} para '${savedBooking.serviceName}'. Dirección: España, Cataluña, Calella, Moragas 74."
-            } else {
-                "Reminder: you have an appointment today at ${savedBooking.timeSlot} for '${savedBooking.serviceName}'. Address: Spain, Catalonia, Calella, Moragas 74."
-            }
-
-            val trigger1 = if (currentLang == "ru") "За 24 часа" else if (currentLang == "es") "24 horas antes" else "24 hours before"
-            val trigger2 = if (currentLang == "ru") "За 2 часа" else if (currentLang == "es") "2 horas antes" else "2 hours before"
-
-            repository.addReminder(
-                Reminder(
-                    bookingId = savedBooking.id,
-                    title = reminderTitle1,
-                    message = reminderMsg1,
-                    triggerTimeBefore = trigger1
-                )
-            )
-            repository.addReminder(
-                Reminder(
-                    bookingId = savedBooking.id,
-                    title = reminderTitle2,
-                    message = reminderMsg2,
-                    triggerTimeBefore = trigger2
-                )
-            )
-
-            // Sovereign SimpleX MQ E2E message dispatch
-            com.example.data.SovereignNodeManager.sendSimplexBooking(
-                bookingId = savedBooking.id,
-                serviceName = savedBooking.serviceName,
-                clientName = savedBooking.clientName,
-                date = savedBooking.date,
-                time = savedBooking.timeSlot
-            )
-
-            _bookingSuccessDialog.value = savedBooking
-            _bookingLoading.value = false
-
-            // Clear booking selection state
-            _selectedService.value = null
-            _selectedMaster.value = null
-            _selectedDate.value = null
-            _selectedTimeSlot.value = null
-        }
-    }
-
     fun cancelBooking(booking: Booking) {
         viewModelScope.launch {
             repository.deleteBooking(booking.id, booking.price)
+            if (currentUserId.isNotBlank() && cloudSyncRepository != null) {
+                val docId = bookingCloudDocIds[booking.id] ?: "bk_${currentUserId}_${booking.id}"
+                cloudSyncRepository.updateBookingStatus(docId, "Отменена")
+            }
         }
     }
 
     fun completeBooking(booking: Booking) {
         viewModelScope.launch {
             repository.completeBooking(booking.id)
+            if (currentUserId.isNotBlank() && cloudSyncRepository != null) {
+                val docId = bookingCloudDocIds[booking.id] ?: "bk_${currentUserId}_${booking.id}"
+                cloudSyncRepository.updateBookingStatus(docId, "Выполнена")
+            }
         }
+    }
+
+    fun rescheduleBooking(booking: Booking, newDate: String, newTimeSlot: String) {
+        viewModelScope.launch {
+            repository.rescheduleBooking(booking.id, newDate, newTimeSlot)
+            repository.addReminder(
+                Reminder(
+                    bookingId = booking.id,
+                    title = "Запись перенесена 📅",
+                    message = "${booking.serviceName} у мастера ${booking.masterName}: новое время $newDate в $newTimeSlot.",
+                    triggerTimeBefore = "Обновлено"
+                )
+            )
+            FcmNotificationManager.scheduleBookingReminder(
+                context = getApplication(),
+                title = "Обновлённый визит в NailiX 💅",
+                body = "${booking.serviceName} у ${booking.masterName} перенесён на $newDate в $newTimeSlot.",
+                delayMinutes = 1440L
+            )
+            if (currentUserId.isNotBlank() && cloudSyncRepository != null) {
+                val docId = bookingCloudDocIds[booking.id] ?: "bk_${currentUserId}_${booking.id}"
+                cloudSyncRepository.updateBookingSchedule(docId, newDate, newTimeSlot)
+            }
+        }
+    }
+
+    fun repeatBooking(booking: Booking) {
+        val matchingService = services.value.find {
+            it.name.equals(booking.serviceName, ignoreCase = true)
+        } ?: ServiceItem(
+            id = 9000 + booking.id,
+            name = booking.serviceName,
+            category = booking.serviceCategory,
+            price = booking.price,
+            durationMin = 75,
+            description = "Повторная запись"
+        )
+        _selectedService.value = matchingService
+        _selectedMaster.value = booking.masterName
+        _selectedDate.value = null
+        _selectedTimeSlot.value = null
+        navigateTo("booking")
+    }
+
+    data class QuickSlotSuggestion(
+        val master: MasterProfile,
+        val service: ServiceItem,
+        val date: String,
+        val timeSlot: String
+    )
+
+    fun findNextAvailableQuickSlot(): QuickSlotSuggestion? {
+        val activeMasters = _mastersList.value
+        val activeServices = services.value
+        val preferredService = activeServices.firstOrNull() ?: return null
+        val preferredMaster = activeMasters.firstOrNull { bookmarkedMasterIds.value.contains(it.id) }
+            ?: activeMasters.firstOrNull()
+            ?: return null
+
+        val candidateBookings = bookings.value.filter { it.status == "Подтверждена" }
+        for (date in dates.take(3)) {
+            for (slot in timeSlots) {
+                val occupied = candidateBookings.any { b ->
+                    b.masterName.equals(preferredMaster.name, ignoreCase = true) &&
+                        b.date == date &&
+                        com.example.util.SmartSchedulerEngine.isSlotOverlappingWithExistingBooking(
+                            targetSlot = slot,
+                            targetDurationMinutes = preferredService.durationMin,
+                            bookedSlot = b.timeSlot,
+                            bookedDurationMinutes = 90
+                        )
+                }
+                if (!occupied) {
+                    return QuickSlotSuggestion(
+                        master = preferredMaster,
+                        service = preferredService,
+                        date = date,
+                        timeSlot = slot
+                    )
+                }
+            }
+        }
+        return null
+    }
+
+    fun quickBookNextAvailableSlot(suggestion: QuickSlotSuggestion) {
+        _selectedService.value = suggestion.service
+        _selectedMaster.value = suggestion.master.name
+        _selectedDate.value = suggestion.date
+        _selectedTimeSlot.value = suggestion.timeSlot
+        requestBookingConfirmation()
     }
 
     // ----------------------------------------------------
@@ -1548,13 +1919,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val baseDesigns = repository.baseDesigns
 
-    val filteredDesigns: StateFlow<List<com.example.data.BaseDesignItem>> = combine(
+    val filteredDesigns = combine(
         lengthFilter, shapeFilter, paletteFilter
     ) { len, shp, pal ->
         baseDesigns.filter { design ->
             (len == null || design.length == len) &&
-            (shp == null || design.shape == shp) &&
-            (pal == null || design.palette == pal)
+                (shp == null || design.shape == shp) &&
+                (pal == null || design.palette == pal)
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), baseDesigns)
 
@@ -1570,7 +1941,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // ----------------------------------------------------
-    // PORTFOLIO + INSTAGRAM PARSING SIMULATION
+    // PORTFOLIO + INSTAGRAM & LOCAL GALLERY
     // ----------------------------------------------------
     private val _showOriginalInstagramLinks = MutableStateFlow(true)
     val showOriginalInstagramLinks: StateFlow<Boolean> = _showOriginalInstagramLinks.asStateFlow()
@@ -1578,8 +1949,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _isInstagramParsing = MutableStateFlow(false)
     val isInstagramParsing: StateFlow<Boolean> = _isInstagramParsing.asStateFlow()
 
-    private val _parsedInstagramPosts = MutableStateFlow<List<com.example.data.InstagramPost>>(emptyList())
-    val parsedInstagramPosts: StateFlow<List<com.example.data.InstagramPost>> = _parsedInstagramPosts.asStateFlow()
+    private val _parsedInstagramPosts = MutableStateFlow<List<InstagramPost>>(emptyList())
+    val parsedInstagramPosts: StateFlow<List<InstagramPost>> = _parsedInstagramPosts.asStateFlow()
 
     private val _instagramUsername = MutableStateFlow("")
     val instagramUsername: StateFlow<String> = _instagramUsername.asStateFlow()
@@ -1587,7 +1958,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _selectedDisplayPostIds = MutableStateFlow<Set<Int>>(emptySet())
     val selectedDisplayPostIds: StateFlow<Set<Int>> = _selectedDisplayPostIds.asStateFlow()
 
-    fun toggleDisplayPostSelection(postId: Int, context: android.content.Context? = null): Boolean {
+    fun toggleDisplayPostSelection(postId: Int, context: Context? = null): Boolean {
         val current = _selectedDisplayPostIds.value
         if (current.contains(postId)) {
             _selectedDisplayPostIds.value = current - postId
@@ -1595,7 +1966,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             if (current.size >= 20) {
                 if (context != null) {
-                    android.widget.Toast.makeText(context, "Можно выбрать не более 20 публикаций для отображения!", android.widget.Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "Можно выбрать не более 20 публикаций для отображения!", Toast.LENGTH_SHORT).show()
                 }
                 return false
             }
@@ -1613,29 +1984,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun triggerInstagramParsing() {
-        viewModelScope.launch {
-            _isInstagramParsing.value = true
-            delay(1200) // Simulated network parsing latency
-            
-            val usernameToParse = _instagramUsername.value.trim().removePrefix("@").ifBlank { "art_nail_master" }
-            val top20 = com.example.data.InstagramRealScraper.getTop20PopularPosts(usernameToParse)
-            
-            val currentList = _parsedInstagramPosts.value.toMutableList()
-            val existingIds = currentList.map { it.id }.toSet()
-            val uniqueNew = top20.filter { it.id !in existingIds }
-            currentList.addAll(0, uniqueNew)
-            
-            val limit = when (_subscriptionTier.value) {
-                "free" -> 20
-                "pro" -> 100
-                "promax" -> 1000
-                else -> 20
-            }
-            val finalSelection = currentList.take(limit)
-            _parsedInstagramPosts.value = finalSelection
-            _selectedDisplayPostIds.value = finalSelection.take(20).map { it.id }.toSet()
-            _isInstagramParsing.value = false
-        }
+        authorizeAndImportInstagram(_instagramUsername.value)
     }
 
     // ----------------------------------------------------
@@ -1653,6 +2002,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             repository.subscribeMailingList(email, phone)
+            syncUserProfileToCloud()
+            if (currentUserId.isNotBlank()) {
+                cloudSyncRepository?.recordLoyaltyTransaction("Бонус за подписку на рассылку 📩", 100)
+            }
             _isSubscribedSuccessfully.emit("Успешная подписка! На ваш баланс зачислено +100 приветственных бонусов!")
             mailingEmail.value = ""
             mailingPhone.value = ""
@@ -1660,7 +2013,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // ----------------------------------------------------
-    // REFERRAL PROGRAM
+    // HONEST CLOUD REFERRAL PROGRAM
     // ----------------------------------------------------
     val referralInputCode = MutableStateFlow("")
     private val _referralMessage = MutableSharedFlow<String>()
@@ -1671,37 +2024,39 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (code.isEmpty()) return
 
         viewModelScope.launch {
-            if (code == "VIC-8842-NIL") {
-                _referralMessage.emit("Вы не можете использовать собственный реферальный код!")
+            val ownCode = _clientProfile.value.referralCode
+            if (ownCode.isNotBlank() && code == ownCode) {
+                _referralMessage.emit("Нельзя активировать собственный реферальный код.")
                 return@launch
             }
-            if (!code.startsWith("VIC-") || code.length < 8) {
-                _referralMessage.emit("Неверный формат реферального кода. Код должен начинаться с 'VIC-'")
+            val cloud = cloudSyncRepository
+            if (cloud == null || currentUserId.isBlank()) {
+                _referralMessage.emit("Требуется авторизация через Google для проверки реферального кода.")
                 return@launch
             }
-            repository.claimReferral(code)
-            _referralMessage.emit("Код активирован! Вам начислено +200 бонусных баллов! Ваш пригласивший друг тоже получит бонус.")
-            referralInputCode.value = ""
-        }
-    }
-
-    fun simulateReferralInvite(friendName: String) {
-        val name = friendName.trim()
-        if (name.isEmpty()) return
-        viewModelScope.launch {
-            repository.simulateReferralInvite(name)
-            _referralMessage.emit("Реферал $name успешно добавлен в систему!")
+            val claimerName = _clientProfile.value.name.ifBlank { clientName.value }.ifBlank { "Клиент NailiX" }
+            val result = cloud.redeemReferralCode(code, claimerName)
+            result.onSuccess { inviterName ->
+                repository.claimReferral(code, inviterName)
+                syncUserProfileToCloud()
+                cloud.recordLoyaltyTransaction("Активация кода $code ($inviterName) 🎁", 200)
+                _referralMessage.emit("Код $code активирован! Пригласивший: $inviterName. Вам начислено +200 бонусных баллов!")
+                referralInputCode.value = ""
+            }.onFailure { err ->
+                _referralMessage.emit(err.localizedMessage ?: "Не удалось активировать код $code.")
+            }
         }
     }
 
     fun spendBonusPoints(amount: Int, reason: String) {
         viewModelScope.launch {
             repository.spendBonusPoints(amount, reason)
+            syncUserProfileToCloud()
         }
     }
 
     // ----------------------------------------------------
-    // PUSH NOTIFICATIONS / REMINDERS SIMULATOR
+    // REAL LOCAL + FCM NOTIFICATIONS
     // ----------------------------------------------------
     private val _inAppNotification = MutableStateFlow<String?>(null)
     val inAppNotification: StateFlow<String?> = _inAppNotification.asStateFlow()
@@ -1710,23 +2065,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _inAppNotification.value = null
     }
 
-    fun simulateNotificationTrigger(reminder: Reminder) {
+    fun triggerLocalReminderNotification(context: Context, reminder: Reminder) {
         viewModelScope.launch {
-            // Update reminder isSent status in database
             repository.markReminderSent(reminder.id)
-            // Trigger beautiful in-app notification banner
+            FcmNotificationManager.showSystemNotification(
+                context = context,
+                title = reminder.title,
+                body = reminder.message,
+                type = "appointment_reminder"
+            )
             _inAppNotification.value = "${reminder.title}\n${reminder.message}"
         }
     }
 
-    // Helpers
     private fun generateNext7Days(): List<String> {
-        val sdf = SimpleDateFormat("dd.MM (EEEE)", Locale("ru"))
+        val sdf = SimpleDateFormat("dd.MM (EEEE)", Locale.forLanguageTag("ru"))
         val list = mutableListOf<String>()
-        val calendar = java.util.Calendar.getInstance()
+        val calendar = Calendar.getInstance()
         for (i in 0..6) {
             list.add(sdf.format(calendar.time))
-            calendar.add(java.util.Calendar.DAY_OF_YEAR, 1)
+            calendar.add(Calendar.DAY_OF_YEAR, 1)
         }
         return list
     }
@@ -1734,9 +2092,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // ----------------------------------------------------
     // SALON OWNER ADMIN METHODS
     // ----------------------------------------------------
-    fun addNewService(name: String, category: String, price: Double, durationMin: Int, description: String, imageUrl: String) {
+    fun addNewService(
+        name: String,
+        category: String,
+        price: Double,
+        durationMin: Int,
+        description: String,
+        imageUrl: String
+    ) {
         viewModelScope.launch {
-            val serviceEntity = com.example.data.ServiceEntity(
+            isSyncing.value = true
+            ownerSyncStatus.value = "Синхронизация..."
+            val serviceEntity = ServiceEntity(
                 name = name,
                 category = category,
                 price = price,
@@ -1744,33 +2111,49 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 description = description,
                 imageUrl = imageUrl.ifEmpty { "https://images.unsplash.com/photo-1604654894610-df63bc536371?w=500&auto=format&fit=crop&q=60" }
             )
-            repository.insertService(serviceEntity)
-            triggerAutomaticPushSync()
+            val newId = repository.insertService(serviceEntity)
+            if (currentUserId.isNotBlank() && cloudSyncRepository != null) {
+                cloudSyncRepository.publishService(
+                    serviceDocId = "svc_${currentUserId}_$newId",
+                    name = serviceEntity.name,
+                    category = serviceEntity.category,
+                    price = serviceEntity.price,
+                    durationMin = serviceEntity.durationMin,
+                    description = serviceEntity.description,
+                    imageUrl = serviceEntity.imageUrl
+                )
+            }
+            isSyncing.value = false
+            ownerSyncStatus.value = "Обновлено в каталоге: ${SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())}"
         }
     }
 
     fun updateServicePrice(id: Int, price: Double) {
         viewModelScope.launch {
+            isSyncing.value = true
             repository.updateServicePrice(id, price)
-            triggerAutomaticPushSync()
+            isSyncing.value = false
+            ownerSyncStatus.value = "Прайс обновлен: ${SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())}"
         }
     }
 
     fun deleteService(id: Int) {
         viewModelScope.launch {
+            isSyncing.value = true
             repository.deleteService(id)
-            triggerAutomaticPushSync()
+            isSyncing.value = false
+            ownerSyncStatus.value = "Услуга удалена: ${SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())}"
         }
     }
 
     fun triggerAutomaticPushSync() {
         viewModelScope.launch {
             isSyncing.value = true
-            ownerSyncStatus.value = "Синхронизация..."
-            delay(1500)
+            ownerSyncStatus.value = "Синхронизация с Cloud Firestore и расчёт SHA-256 снимка..."
+            computeRoomStateSnapshot()
+            syncUserProfileToCloud()
             isSyncing.value = false
-            ownerSyncStatus.value = "Обновлено на устройствах клиентов: ${SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())}"
-            _inAppNotification.value = "📢 База данных синхронизирована!\nИзменения цен и карточек новых услуг автоматически доставлены на устройства клиентов с вашего устройства."
+            ownerSyncStatus.value = "Синхронизировано: ${SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())}"
         }
     }
 
@@ -1821,203 +2204,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // ----------------------------------------------------
-    // IN-APP SALON INTERNET RADIO STREAMER (SomaFM & Free Global Stations)
+    // IN-APP SALON INTERNET RADIO STREAMER (Delegated)
     // ----------------------------------------------------
-    val topRadioStations = listOf(
-        RadioStation("lofigirl", "Lofi Girl Beats 🌸", "Lofi / Chill", "Global", "https://ice1.somafm.com/lofi-128-mp3"),
-        RadioStation("groovesalad", "SomaFM Groove Salad 🥗", "Ambient / Chillout", "Global", "https://ice1.somafm.com/groovesalad-128-mp3"),
-        RadioStation("lounge", "SomaFM Lounge 🛋️", "Jazz / Lounge", "Global", "https://ice1.somafm.com/lounge-128-mp3"),
-        RadioStation("paris", "Café de Paris 🥐", "Chanson / Acoustic", "France", "https://chantefrance.ice.infomaniak.ch/chantefrance-96.mp3"),
-        RadioStation("swissjazz", "Radio Swiss Jazz 🎷", "Jazz / Smooth", "Switzerland", "https://stream.srg-ssr.ch/m/rsj/mp3_128"),
-        RadioStation("swissclassic", "Radio Swiss Classic 🎻", "Classical", "Switzerland", "https://stream.srg-ssr.ch/m/rsc_de/mp3_128"),
-        RadioStation("antenne", "Antenne Bayern Chill 🍹", "Lounge / Relax", "Germany", "https://stream.antenne.de/chillout/stream/mp3"),
-        RadioStation("secretagent", "SomaFM Secret Agent 🕶️", "Beat / Lounge", "Global", "https://ice1.somafm.com/secretagent-128-mp3"),
-        RadioStation("goa", "SomaFM Suburbs of Goa 👳", "World / Ethno-Chill", "Global", "https://ice1.somafm.com/suburbsofgoa-128-mp3"),
-        RadioStation("deepspace", "SomaFM Deep Space One 🚀", "Ambient / Space", "Global", "https://ice1.somafm.com/deepspaceone-128-mp3"),
-        RadioStation("poptron", "SomaFM PopTron ⚡", "Pop / Synthwave", "Global", "https://ice1.somafm.com/poptron-128-mp3"),
-        RadioStation("indie", "SomaFM Indie Pop 🎸", "Indie / Alternative", "Global", "https://ice1.somafm.com/indiepop-128-mp3"),
-        RadioStation("illinois", "Illinois Street Lounge 🍹", "Retro Lounge", "Global", "https://ice1.somafm.com/illinois-128-mp3"),
-        RadioStation("bootliquor", "SomaFM Boot Liquor 🤠", "Americana / Roots", "Global", "https://ice1.somafm.com/bootliquor-128-mp3"),
-        RadioStation("sonic", "SomaFM Sonic Universe 🌌", "Avant-garde Jazz", "Global", "https://ice1.somafm.com/sonicuniverse-128-mp3"),
-        RadioStation("cliqhop", "SomaFM Cliqhop 👾", "Electronic / IDM", "Global", "https://ice1.somafm.com/cliqhop-128-mp3"),
-        RadioStation("fluid", "SomaFM Fluid 🌊", "Instrumental Hip Hop", "Global", "https://ice1.somafm.com/fluid-128-mp3"),
-        RadioStation("christmas", "Cozy Christmas Radio ❄️", "Holiday / Jazz", "Global", "https://ice1.somafm.com/christmas-128-mp3"),
-        RadioStation("lush", "SomaFM Lush 💋", "Sensuous Vocals", "Global", "https://ice1.somafm.com/lush-128-mp3"),
-        RadioStation("covers", "SomaFM Covers 🎤", "Acoustic Covers", "Global", "https://ice1.somafm.com/covers-128-mp3")
-    )
+    val topRadioStations: List<RadioStation> get() = radioController.topRadioStations
+    val radioIsPlaying: StateFlow<Boolean> get() = radioController.radioIsPlaying
+    val radioIsLoading: StateFlow<Boolean> get() = radioController.radioIsLoading
+    val selectedStation: StateFlow<RadioStation?> get() = radioController.selectedStation
+    val radioError: StateFlow<String?> get() = radioController.radioError
 
-    private var mediaPlayer: MediaPlayer? = null
-    private var isMediaPlayerPrepared = false
-    private var isMediaPlayerInError = false
-    private var radioSessionId = 0L
-
-    private val _radioIsPlaying = MutableStateFlow(false)
-    val radioIsPlaying: StateFlow<Boolean> = _radioIsPlaying.asStateFlow()
-
-    private val _radioIsLoading = MutableStateFlow(false)
-    val radioIsLoading: StateFlow<Boolean> = _radioIsLoading.asStateFlow()
-
-    private val _selectedStation = MutableStateFlow<RadioStation?>(
-        RadioStation("lofigirl", "Lofi Girl Beats 🌸", "Lofi / Chill", "Global", "https://ice1.somafm.com/lofi-128-mp3")
-    )
-    val selectedStation: StateFlow<RadioStation?> = _selectedStation.asStateFlow()
-
-    private val _radioError = MutableStateFlow<String?>(null)
-    val radioError: StateFlow<String?> = _radioError.asStateFlow()
-
-    private fun releaseMediaPlayer() {
-        val currentMp = mediaPlayer ?: return
-        val canStop = isMediaPlayerPrepared && !isMediaPlayerInError
-        mediaPlayer = null
-        isMediaPlayerPrepared = false
-        isMediaPlayerInError = false
-
-        runCatching {
-            currentMp.setOnPreparedListener(null)
-            currentMp.setOnErrorListener(null)
-            currentMp.setOnCompletionListener(null)
-            if (canStop) {
-                if (currentMp.isPlaying) {
-                    currentMp.pause()
-                }
-                currentMp.stop()
-            }
-        }
-        runCatching {
-            currentMp.release()
-        }
-    }
-
-    fun playRadioStation(station: RadioStation) {
-        val sessionId = ++radioSessionId
-        viewModelScope.launch {
-            var newMp: MediaPlayer? = null
-            try {
-                _radioError.value = null
-                _selectedStation.value = station
-                _radioIsLoading.value = true
-                _radioIsPlaying.value = false
-
-                // Safely release any previous session without calling stop() in PREPARING/IDLE/ERROR states
-                releaseMediaPlayer()
-
-                val mp = MediaPlayer()
-                newMp = mp
-                mp.setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                        .setUsage(AudioAttributes.USAGE_MEDIA)
-                        .build()
-                )
-                mp.setDataSource(station.url)
-
-                if (sessionId != radioSessionId) {
-                    runCatching { mp.release() }
-                    return@launch
-                }
-
-                isMediaPlayerPrepared = false
-                isMediaPlayerInError = false
-                mediaPlayer = mp
-
-                mp.setOnPreparedListener { preparedMp ->
-                    if (mediaPlayer == preparedMp && sessionId == radioSessionId) {
-                        isMediaPlayerPrepared = true
-                        isMediaPlayerInError = false
-                        _radioIsLoading.value = false
-                        _radioIsPlaying.value = true
-                        runCatching {
-                            preparedMp.start()
-                        }.onFailure { e ->
-                            isMediaPlayerPrepared = false
-                            isMediaPlayerInError = true
-                            _radioIsPlaying.value = false
-                            _radioError.value = e.localizedMessage ?: "Ошибка запуска радио"
-                            releaseMediaPlayer()
-                        }
-                    } else {
-                        runCatching { preparedMp.release() }
-                    }
-                }
-
-                mp.setOnErrorListener { failedMp, what, extra ->
-                    if (mediaPlayer == failedMp && sessionId == radioSessionId) {
-                        isMediaPlayerPrepared = false
-                        isMediaPlayerInError = true
-                        _radioIsLoading.value = false
-                        _radioIsPlaying.value = false
-                        _radioError.value = "Ошибка стрима ($what, $extra)"
-                        releaseMediaPlayer()
-                    } else {
-                        runCatching { failedMp.release() }
-                    }
-                    true
-                }
-
-                mp.setOnCompletionListener { completedMp ->
-                    if (mediaPlayer == completedMp && sessionId == radioSessionId) {
-                        _radioIsPlaying.value = false
-                    }
-                }
-
-                mp.prepareAsync()
-            } catch (e: Exception) {
-                if (sessionId == radioSessionId) {
-                    releaseMediaPlayer()
-                    _radioIsLoading.value = false
-                    _radioIsPlaying.value = false
-                    _radioError.value = e.localizedMessage ?: "Ошибка подключения к радио"
-                } else {
-                    runCatching { newMp?.release() }
-                }
-            }
-        }
-    }
-
-    fun toggleRadioPlayback() {
-        val current = _selectedStation.value ?: return
-        when {
-            _radioIsLoading.value -> stopRadio()
-            _radioIsPlaying.value -> pauseRadio()
-            isMediaPlayerPrepared && !isMediaPlayerInError && mediaPlayer != null -> {
-                runCatching {
-                    mediaPlayer?.start()
-                    _radioIsPlaying.value = true
-                }.onFailure {
-                    playRadioStation(current)
-                }
-            }
-            else -> playRadioStation(current)
-        }
-    }
-
-    fun pauseRadio() {
-        try {
-            mediaPlayer?.let { mp ->
-                if (isMediaPlayerPrepared && !isMediaPlayerInError && mp.isPlaying) {
-                    mp.pause()
-                }
-            }
-            _radioIsPlaying.value = false
-        } catch (e: Exception) {
-            _radioError.value = e.localizedMessage
-        }
-    }
-
-    fun stopRadio() {
-        radioSessionId++
-        releaseMediaPlayer()
-        _radioIsPlaying.value = false
-        _radioIsLoading.value = false
-    }
-
-    fun playRandomStation() {
-        if (topRadioStations.isEmpty()) return
-        val current = _selectedStation.value
-        val available = topRadioStations.filter { it.id != current?.id }
-        val nextStation = if (available.isNotEmpty()) available.random() else topRadioStations.random()
-        playRadioStation(nextStation)
-    }
+    fun playRadioStation(station: RadioStation) = radioController.playRadioStation(station)
+    fun toggleRadioPlayback() = radioController.toggleRadioPlayback()
+    fun pauseRadio() = radioController.pauseRadio()
+    fun stopRadio() = radioController.stopRadio()
+    fun playRandomStation() = radioController.playRandomStation()
 
     // ----------------------------------------------------
     // IN-APP NAIL ART CHALLENGES & BATTLES
@@ -2031,7 +2230,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         prefs.edit().putBoolean("has_vip_challenger_pass", next).apply()
     }
 
-    val activeContests = MutableStateFlow<List<NailContest>>(
+    val activeContests = MutableStateFlow(
         listOf(
             NailContest(
                 id = "wedding",
@@ -2060,22 +2259,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     )
 
-    val selectedContestId = MutableStateFlow<String>("wedding")
+    val selectedContestId = MutableStateFlow("wedding")
 
-    private val _contestEntries = MutableStateFlow<List<ContestEntry>>(
+    private val _contestEntries = MutableStateFlow(
         listOf(
-            // Wedding Contests
             ContestEntry("w1", "wedding", "Жемчужная пыльца", "https://images.unsplash.com/photo-1632345031435-8797b2d58045?w=500&auto=format&fit=crop&q=60", "@nastya_nails", 342),
             ContestEntry("w2", "wedding", "Классический френч", "https://images.unsplash.com/photo-1604654894610-df63bc536371?w=500&auto=format&fit=crop&q=60", "@elena_salon", 289),
             ContestEntry("w3", "wedding", "Розовый минимализм", "https://images.unsplash.com/photo-1519014816548-bf5fe059798b?w=500&auto=format&fit=crop&q=60", "@masha_beauty", 152),
             ContestEntry("w4", "wedding", "Золотая поталь на молоке", "https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?w=500&auto=format&fit=crop&q=60", "@kate_perfect", 405),
-
-            // Neon Contests
             ContestEntry("n1", "neon", "Кислотный лайм", "https://images.unsplash.com/photo-1604654894610-df63bc536371?w=500&auto=format&fit=crop&q=60", "@bright_girl", 512),
             ContestEntry("n2", "neon", "Коралловая искра", "https://images.unsplash.com/photo-1607779097040-26e80aa78e66?w=500&auto=format&fit=crop&q=60", "@elena_salon", 418),
             ContestEntry("n3", "neon", "Апельсиновый градиент", "https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?w=500&auto=format&fit=crop&q=60", "@nails_by_me", 265),
-
-            // Gothic Contests
             ContestEntry("g1", "gothic", "Черный велюр", "https://images.unsplash.com/photo-1607779097040-26e80aa78e66?w=500&auto=format&fit=crop&q=60", "@goth_girl", 423),
             ContestEntry("g2", "gothic", "Бордовые стразы", "https://images.unsplash.com/photo-1519014816548-bf5fe059798b?w=500&auto=format&fit=crop&q=60", "@dark_beauty", 389),
             ContestEntry("g3", "gothic", "Изумруд и поталь", "https://images.unsplash.com/photo-1632345031435-8797b2d58045?w=500&auto=format&fit=crop&q=60", "@emerald_nails", 215)
@@ -2102,17 +2296,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun voteForEntry(winnerId: String, loserId: String) {
+    fun voteForEntry(winnerId: String, @Suppress("UNUSED_PARAMETER") loserId: String) {
         viewModelScope.launch {
             _contestEntries.value = _contestEntries.value.map { entry ->
-                if (entry.id == winnerId) {
-                    entry.copy(votes = entry.votes + 1)
-                } else {
-                    entry
-                }
+                if (entry.id == winnerId) entry.copy(votes = entry.votes + 1) else entry
             }
             val pointsAwarded = if (_hasVipChallengerPass.value) 10 else 5
             repository.addBonusPoints(pointsAwarded, "Голосование в конкурсе 🗳️")
+            syncUserProfileToCloud()
             generateVotingPair()
         }
     }
@@ -2122,26 +2313,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         title: String,
         imageUrl: String,
         authorName: String,
-        context: android.content.Context
+        context: Context
     ): Boolean {
         val loyalty = loyaltyInfo.value
         val currentPoints = loyalty?.points ?: 0
         val cost = 30
-        
+
         if (!_hasVipChallengerPass.value && currentPoints < cost) {
-            android.widget.Toast.makeText(
-                context, 
-                "Недостаточно бонусов! Стоимость участия: $cost Б. Или приобретите сверхдешевый 'Золотой абонемент' для бесплатных заявок!", 
-                android.widget.Toast.LENGTH_LONG
+            Toast.makeText(
+                context,
+                "Недостаточно бонусов! Стоимость участия: $cost Б.",
+                Toast.LENGTH_LONG
             ).show()
             return false
         }
-        
+
         viewModelScope.launch {
             if (!_hasVipChallengerPass.value) {
                 repository.spendBonusPoints(cost, "Участие в конкурсе '$contestId'")
+                syncUserProfileToCloud()
             }
-            
+
             val newEntry = ContestEntry(
                 id = "user_${System.currentTimeMillis()}",
                 contestId = contestId,
@@ -2151,7 +2343,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 votes = 0,
                 isUserSubmitted = true
             )
-            
+
             _contestEntries.value = _contestEntries.value + newEntry
             generateVotingPair()
         }
@@ -2160,6 +2352,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         super.onCleared()
-        stopRadio()
+        radioController.stopRadio()
+    }
+
+    companion object {
+        fun provideFactory(application: Application, uid: String): ViewModelProvider.Factory {
+            return object : ViewModelProvider.Factory {
+                @Suppress("UNCHECKED_CAST")
+                override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                    return MainViewModel(
+                        application = application,
+                        currentUserId = uid,
+                        cloudSyncRepository = CloudSyncRepository(application.applicationContext)
+                    ) as T
+                }
+            }
+        }
     }
 }

@@ -79,7 +79,6 @@ import com.example.ui.viewmodel.MainViewModel
 import com.example.ui.viewmodel.MasterProfile
 import com.example.ui.viewmodel.ClientProfile
 import com.example.ui.viewmodel.AggregatorReview
-import com.example.ui.viewmodel.CustomAd
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.draw.drawBehind
 import com.example.ui.theme.skinOrnament
@@ -98,11 +97,16 @@ fun HomeScreenTab(viewModel: MainViewModel) {
     val phoneInput by viewModel.mailingPhone.collectAsStateWithLifecycle()
 
     val masters by viewModel.mastersList.collectAsStateWithLifecycle()
+    val services by viewModel.services.collectAsStateWithLifecycle()
     val bookmarks by viewModel.bookmarkedMasterIds.collectAsStateWithLifecycle()
     val client by viewModel.clientProfile.collectAsStateWithLifecycle()
     val onboardingLanguage by viewModel.onboardingLanguage.collectAsStateWithLifecycle()
     val selectedSkin by viewModel.selectedSkin.collectAsStateWithLifecycle()
     val isDarkTheme by viewModel.isDarkTheme.collectAsStateWithLifecycle()
+
+    val quickSlot = remember(masters, bookings, services, bookmarks) {
+        viewModel.findNextAvailableQuickSlot()
+    }
 
     var filterOnlyBookmarked by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
@@ -134,7 +138,7 @@ fun HomeScreenTab(viewModel: MainViewModel) {
             Card(
                 modifier = Modifier
                     .weight(1.1f)
-                    .height(110.dp),
+                    .height(124.dp),
                 shape = RoundedCornerShape(16.dp)
             ) {
                 Box(modifier = Modifier.fillMaxSize()) {
@@ -177,14 +181,14 @@ fun HomeScreenTab(viewModel: MainViewModel) {
             Card(
                 modifier = Modifier
                     .weight(0.9f)
-                    .height(110.dp),
+                    .height(124.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.15f)),
                 shape = RoundedCornerShape(16.dp),
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.15f))
             ) {
                 Column(
                     modifier = Modifier
-                        .padding(10.dp)
+                        .padding(start = 10.dp, end = 4.dp, top = 4.dp, bottom = 10.dp)
                         .fillMaxHeight(),
                     verticalArrangement = Arrangement.SpaceBetween
                 ) {
@@ -197,31 +201,85 @@ fun HomeScreenTab(viewModel: MainViewModel) {
                             text = if (onboardingLanguage == "ru") "📍 Мои гео-точки" else if (onboardingLanguage == "es") "📍 Mis ubicaciones" else "📍 My Locations",
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.weight(1f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                         IconButton(
                             onClick = { showCustomizeLocationDialog = true },
                             modifier = Modifier
-                                .size(20.dp)
+                                .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
                                 .testTag("edit_locations_button")
                         ) {
-                            Icon(Icons.Default.Edit, contentDescription = "Edit Location", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(12.dp))
+                            Icon(Icons.Default.Edit, contentDescription = "Edit Location", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
                         }
                     }
-                    Column {
+                    Column(modifier = Modifier.padding(end = 6.dp)) {
                         Text(
-                            text = "🏠 " + (if (onboardingLanguage == "ru") "Дом" else if (onboardingLanguage == "es") "Casa" else "Home") + ": ${client.homeAddress}",
+                            text = "🏠 " + (if (onboardingLanguage == "ru") "Дом" else if (onboardingLanguage == "es") "Casa" else "Home") + ": ${client.homeAddress.ifBlank { "—" }}",
                             style = MaterialTheme.typography.labelSmall,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = "💼 " + (if (onboardingLanguage == "ru") "Работа" else if (onboardingLanguage == "es") "Trabajo" else "Work") + ": ${client.workAddress}",
+                            text = "💼 " + (if (onboardingLanguage == "ru") "Работа" else if (onboardingLanguage == "es") "Trabajo" else "Work") + ": ${client.workAddress.ifBlank { "—" }}",
                             style = MaterialTheme.typography.labelSmall,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
+                    }
+                }
+            }
+        }
+
+        // 1.5 Quick 1-Tap Next Available Slot Card
+        quickSlot?.let { suggestion ->
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("quick_slot_card"),
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f))
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "⚡ Ближайшее окно",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = "${suggestion.master.name} • ${suggestion.service.name}",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = "${suggestion.date}, ${suggestion.timeSlot}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Button(
+                        onClick = { viewModel.quickBookNextAvailableSlot(suggestion) },
+                        modifier = Modifier
+                            .defaultMinSize(minHeight = 48.dp)
+                            .testTag("quick_book_one_tap_btn"),
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                    ) {
+                        Text("Занять в 1 тап", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -256,7 +314,7 @@ fun HomeScreenTab(viewModel: MainViewModel) {
                 label = { Text(if (onboardingLanguage == "ru") "★ Избранные" else if (onboardingLanguage == "es") "★ Favoritos" else "★ Bookmarks", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
                 modifier = Modifier
                     .weight(0.8f)
-                    .height(36.dp)
+                    .defaultMinSize(minHeight = 48.dp)
                     .testTag("filter_bookmarked_masters"),
                 leadingIcon = if (filterOnlyBookmarked) {
                     { Icon(Icons.Default.Check, contentDescription = "Selected", modifier = Modifier.size(12.dp)) }
@@ -264,7 +322,7 @@ fun HomeScreenTab(viewModel: MainViewModel) {
             )
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(4.dp))
 
         // 3. Spacious full-width master selection dashboard
         Card(
@@ -408,13 +466,15 @@ fun CompactMasterCard(
 
                 IconButton(
                     onClick = { viewModel.toggleBookmarkMaster(master.id) },
-                    modifier = Modifier.size(24.dp).testTag("bookmark_toggle_${master.id}")
+                    modifier = Modifier
+                        .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
+                        .testTag("bookmark_toggle_${master.id}")
                 ) {
                     Icon(
                         imageVector = if (isBookmarked) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                         contentDescription = "Bookmark toggle",
                         tint = if (isBookmarked) Color.Red else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier.size(20.dp)
                     )
                 }
             }
@@ -491,8 +551,8 @@ fun InteractiveMastersMap(
                 val density = LocalDensity.current
 
                 // Marker radii in pixels for pixel-perfect relative positioning
-                val anchorRadiusPx = with(density) { 20.dp.toPx() }
-                val markerRadiusPx = with(density) { 18.dp.toPx() }
+                val anchorRadiusPx = with(density) { 24.dp.toPx() }
+                val markerRadiusPx = with(density) { 24.dp.toPx() }
 
                 // Map spans in degrees based on zoom level
                 val latSpan = 0.007f / zoomLevel
@@ -713,7 +773,7 @@ fun InteractiveMastersMap(
                                         (mY - markerRadiusPx).roundToInt()
                                     )
                                 }
-                                .size(36.dp)
+                                .size(48.dp)
                                 .clickable { selectedMapMaster = master }
                                 .testTag("map_marker_${master.id}"),
                             contentAlignment = Alignment.Center
@@ -975,273 +1035,6 @@ fun InteractiveMastersMap(
 // --------------------------------------------------------------------
 
 
-@Composable
-fun AdBanner(viewModel: MainViewModel) {
-    val adSource by viewModel.adSource.collectAsStateWithLifecycle()
-    val customAds by viewModel.customAds.collectAsStateWithLifecycle()
-    val context = LocalContext.current
 
-    // Cycle through custom ads every 8 seconds
-    var customAdIndex by remember { mutableStateOf(0) }
-    LaunchedEffect(customAds, adSource) {
-        if (adSource == "custom" && customAds.isNotEmpty()) {
-            while (true) {
-                kotlinx.coroutines.delay(8000)
-                customAdIndex = (customAdIndex + 1) % customAds.size
-            }
-        }
-    }
-
-    // Google AdMob mock slogans
-    val googleSlogans = listOf(
-        "NailPro Gel: Профессиональные лаки премиум качества. Скидка 20% по промокоду NAIL20! 💅",
-        "Стерилизаторы ГП-10 в наличии. Безопасность ваших клиентов — на первом месте! 🛡️",
-        "Курсы маникюра от ведущих технологов Европы. Получи диплом государственного образца! 🎓",
-        "Торнадо Фрезы: Алмазное напыление, долгий срок службы. Закажите прямо сейчас! ⚙️"
-    )
-    var googleAdIndex by remember { mutableStateOf(0) }
-    LaunchedEffect(adSource) {
-        if (adSource == "google") {
-            while (true) {
-                kotlinx.coroutines.delay(10000)
-                googleAdIndex = (googleAdIndex + 1) % googleSlogans.size
-            }
-        }
-    }
-
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp)
-            .testTag("ad_banner_container"),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (adSource == "google") {
-                MaterialTheme.colorScheme.surfaceVariant
-            } else {
-                val ad = customAds.getOrNull(customAdIndex)
-                when (ad?.themeColor) {
-                    "Pink" -> Color(0xFFFFF1F2)
-                    "Gold" -> Color(0xFFFEF3C7)
-                    "Cyan" -> Color(0xFFECFEFF)
-                    "Purple" -> Color(0xFFF5F3FF)
-                    "Green" -> Color(0xFFF0FDF4)
-                    else -> Color(0xFFFFF1F2)
-                }
-            }
-        ),
-        border = BorderStroke(
-            width = 1.2.dp,
-            color = if (adSource == "google") {
-                MaterialTheme.colorScheme.outlineVariant
-            } else {
-                val ad = customAds.getOrNull(customAdIndex)
-                when (ad?.themeColor) {
-                    "Pink" -> Color(0xFFFDA4AF)
-                    "Gold" -> Color(0xFFFCD34D)
-                    "Cyan" -> Color(0xFF67E8F9)
-                    "Purple" -> Color(0xFFC7D2FE)
-                    "Green" -> Color(0xFF86EFAC)
-                    else -> Color(0xFFFDA4AF)
-                }
-            }
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-    ) {
-        if (adSource == "google") {
-            // GOOGLE AD BANNER
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable {
-                        Toast.makeText(context, "Переход на сайт рекламодателя (Google Ads)... 🌐", Toast.LENGTH_SHORT).show()
-                    }
-                    .padding(10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Ad Badge
-                Box(
-                    modifier = Modifier
-                        .background(Color(0xFFEAB308), shape = RoundedCornerShape(4.dp))
-                        .padding(horizontal = 5.dp, vertical = 2.dp)
-                ) {
-                    Text(
-                        text = "Реклама",
-                        color = Color.Black,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-                
-                Spacer(modifier = Modifier.width(8.dp))
-                
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Google AdMob Network",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                    )
-                    Text(
-                        text = googleSlogans.getOrElse(googleAdIndex) { googleSlogans[0] },
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                
-                Spacer(modifier = Modifier.width(4.dp))
-                
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.Info,
-                        contentDescription = "Ad Info",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = "Close Ad",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                        modifier = Modifier.size(16.dp).clickable {
-                            Toast.makeText(context, "Реклама скрыта на текущую сессию.", Toast.LENGTH_SHORT).show()
-                        }
-                    )
-                }
-            }
-        } else {
-            // CUSTOM PAID MASTER AD BANNER
-            val ad = customAds.getOrNull(customAdIndex)
-            if (ad != null) {
-                val bannerColor = when (ad.themeColor) {
-                    "Pink" -> Color(0xFFE1306C)
-                    "Gold" -> Color(0xFFD97706)
-                    "Cyan" -> Color(0xFF0891B2)
-                    "Purple" -> Color(0xFF7C3AED)
-                    "Green" -> Color(0xFF16A34A)
-                    else -> Color(0xFFE1306C)
-                }
-                
-                val bannerBgAccent = when (ad.themeColor) {
-                    "Pink" -> Color(0xFFFCE7F3)
-                    "Gold" -> Color(0xFFFEF3C7)
-                    "Cyan" -> Color(0xFFCFFAFE)
-                    "Purple" -> Color(0xFFEDE9FE)
-                    "Green" -> Color(0xFFDCFCE7)
-                    else -> Color(0xFFFCE7F3)
-                }
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            viewModel.selectMaster(ad.masterName)
-                            viewModel.navigateTo("booking")
-                            Toast.makeText(context, "Открываем профиль мастера ${ad.masterName}! 🎉", Toast.LENGTH_SHORT).show()
-                        }
-                        .padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(
-                        modifier = Modifier.weight(1f),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(42.dp)
-                                .background(bannerColor, shape = CircleShape),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            if (ad.discount.isNotEmpty()) {
-                                Text(
-                                    text = ad.discount,
-                                    color = Color.White,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Black
-                                )
-                            } else {
-                                Icon(
-                                    imageVector = Icons.Default.Campaign,
-                                    contentDescription = "Promo",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(24.dp)
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.width(12.dp))
-
-                        Column {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(
-                                    modifier = Modifier
-                                        .background(bannerBgAccent, shape = RoundedCornerShape(4.dp))
-                                        .padding(horizontal = 6.dp, vertical = 2.dp)
-                                ) {
-                                    Text(
-                                        text = "АКЦИЯ МАСТЕРА",
-                                        color = bannerColor,
-                                        fontSize = 8.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = ad.masterName.take(24) + if(ad.masterName.length > 24) "..." else "",
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF374151)
-                                )
-                            }
-                            
-                            Spacer(modifier = Modifier.height(2.dp))
-                            
-                            Text(
-                                text = ad.title,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF111827)
-                            )
-                            Text(
-                                text = ad.description,
-                                fontSize = 11.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                color = Color(0xFF4B5563)
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.width(12.dp))
-
-                    Button(
-                        onClick = {
-                            viewModel.selectMaster(ad.masterName)
-                            viewModel.navigateTo("booking")
-                            Toast.makeText(context, "Запись к мастеру ${ad.masterName}! 💅", Toast.LENGTH_SHORT).show()
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = bannerColor),
-                        shape = RoundedCornerShape(8.dp),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                        modifier = Modifier.height(34.dp)
-                    ) {
-                        Text(
-                            text = ad.ctaText,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
-                    }
-                }
-            } else {
-                Box(modifier = Modifier.fillMaxWidth().padding(12.dp), contentAlignment = Alignment.Center) {
-                    Text("Спонсорская реклама мастеров", fontSize = 12.sp, color = Color.Gray)
-                }
-            }
-        }
-    }
-}
 
 

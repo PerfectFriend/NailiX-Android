@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
@@ -74,7 +75,6 @@ import com.example.ui.viewmodel.MainViewModel
 import com.example.ui.viewmodel.MasterProfile
 import com.example.ui.viewmodel.ClientProfile
 import com.example.ui.viewmodel.AggregatorReview
-import com.example.ui.viewmodel.CustomAd
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.draw.drawBehind
 import com.example.ui.theme.skinOrnament
@@ -120,6 +120,7 @@ fun MainScreen(viewModel: MainViewModel) {
     val selectedSkin by viewModel.selectedSkin.collectAsStateWithLifecycle()
     val isDarkTheme by viewModel.isDarkTheme.collectAsStateWithLifecycle()
     val radioIsPlaying by viewModel.radioIsPlaying.collectAsStateWithLifecycle()
+    val mastersList by viewModel.mastersList.collectAsStateWithLifecycle()
 
     var showProfileManager by remember { mutableStateOf(false) }
     var showStartupProfileSelector by remember { mutableStateOf(false) }
@@ -145,6 +146,16 @@ fun MainScreen(viewModel: MainViewModel) {
     LaunchedEffect(Unit) {
         viewModel.referralMessage.collect { message ->
             Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    BackHandler(
+        enabled = showRadioSelector || isAdminMode || (userRole == "client" && currentTab != "home")
+    ) {
+        when {
+            showRadioSelector -> showRadioSelector = false
+            isAdminMode -> viewModel.isAdminMode.value = false
+            userRole == "client" && currentTab != "home" -> viewModel.navigateTo("home")
         }
     }
 
@@ -215,6 +226,9 @@ fun MainScreen(viewModel: MainViewModel) {
                     Brush.verticalGradient(colors = overlayColors)
                 )
         )
+
+        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            val useNavigationRail = maxWidth >= 600.dp && !isAdminMode && userRole == "client"
 
         Scaffold(
             containerColor = Color.Transparent, // Transparent so the beautiful Gaudi background shines through!
@@ -322,7 +336,7 @@ fun MainScreen(viewModel: MainViewModel) {
             }
         },
         bottomBar = {
-            if (!isAdminMode && userRole == "client") {
+            if (!isAdminMode && userRole == "client" && !useNavigationRail) {
                 NavigationBar(
                     containerColor = MaterialTheme.colorScheme.surface,
                     windowInsets = WindowInsets.navigationBars
@@ -432,11 +446,125 @@ fun MainScreen(viewModel: MainViewModel) {
             }
         }
     ) { innerPadding ->
-        Box(
+        Row(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
+            if (useNavigationRail) {
+                NavigationRail(
+                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                    modifier = Modifier.testTag("adaptive_navigation_rail")
+                ) {
+                    NavigationRailItem(
+                        selected = currentTab == "home" && !showRadioSelector,
+                        onClick = {
+                            showRadioSelector = false
+                            viewModel.navigateTo("home")
+                        },
+                        icon = {
+                            Icon(
+                                imageVector = if (currentTab == "home" && !showRadioSelector) Icons.Default.Home else Icons.Outlined.Home,
+                                contentDescription = "Главная"
+                            )
+                        },
+                        label = { Text("Главная", fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1) }
+                    )
+                    NavigationRailItem(
+                        selected = currentTab == "booking" && !showRadioSelector,
+                        onClick = {
+                            showRadioSelector = false
+                            viewModel.navigateTo("booking")
+                        },
+                        icon = {
+                            Icon(
+                                imageVector = if (currentTab == "booking" && !showRadioSelector) Icons.Default.CalendarMonth else Icons.Outlined.CalendarMonth,
+                                contentDescription = "Запись"
+                            )
+                        },
+                        label = { Text("Запись", fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1) }
+                    )
+                    NavigationRailItem(
+                        selected = currentTab == "designs" && !showRadioSelector,
+                        onClick = {
+                            showRadioSelector = false
+                            viewModel.navigateTo("designs")
+                        },
+                        icon = {
+                            Icon(
+                                imageVector = if (currentTab == "designs" && !showRadioSelector) Icons.Default.AutoAwesome else Icons.Outlined.AutoAwesome,
+                                contentDescription = "ART"
+                            )
+                        },
+                        label = { Text("ART", fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1) }
+                    )
+                    NavigationRailItem(
+                        selected = currentTab == "loyalty" && !showRadioSelector,
+                        onClick = {
+                            showRadioSelector = false
+                            viewModel.navigateTo("loyalty")
+                        },
+                        icon = {
+                            Icon(
+                                imageVector = if (currentTab == "loyalty" && !showRadioSelector) Icons.Default.WorkspacePremium else Icons.Outlined.WorkspacePremium,
+                                contentDescription = "Клуб"
+                            )
+                        },
+                        label = { Text("Клуб", fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1) }
+                    )
+                    NavigationRailItem(
+                        selected = currentTab == "portfolio" && !showRadioSelector,
+                        onClick = {
+                            showRadioSelector = false
+                            viewModel.navigateTo("portfolio")
+                        },
+                        icon = {
+                            Icon(
+                                imageVector = if (currentTab == "portfolio" && !showRadioSelector) Icons.Default.PhotoLibrary else Icons.Outlined.PhotoLibrary,
+                                contentDescription = "Галерея"
+                            )
+                        },
+                        label = { Text("Галерея", fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1) }
+                    )
+                    NavigationRailItem(
+                        selected = showRadioSelector,
+                        onClick = { showRadioSelector = true },
+                        icon = {
+                            BadgedBox(
+                                badge = {
+                                    if (radioIsPlaying) {
+                                        Badge(
+                                            containerColor = Color(0xFF10B981),
+                                            contentColor = Color.White
+                                        ) {
+                                            Text("ON", fontSize = 8.sp, fontWeight = FontWeight.Black)
+                                        }
+                                    }
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = if (radioIsPlaying) Icons.Default.Radio else Icons.Outlined.Radio,
+                                    contentDescription = "Радио",
+                                    tint = if (radioIsPlaying) MaterialTheme.colorScheme.primary else LocalContentColor.current
+                                )
+                            }
+                        },
+                        label = { Text("Радио", fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1) }
+                    )
+                }
+            }
+
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight(),
+            contentAlignment = Alignment.TopCenter
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .widthIn(max = 840.dp)
+            ) {
             // Screen contents - Maximize full available screen without bottom ad overlays
             if (userRole == "master") {
                 if (isAdminMode) {
@@ -457,7 +585,7 @@ fun MainScreen(viewModel: MainViewModel) {
             }
 
             // Beautiful In-App simulated Push Notification alert banner
-            AnimatedVisibility(
+            androidx.compose.animation.AnimatedVisibility(
                 visible = inAppNotification != null,
                 enter = fadeIn(),
                 exit = fadeOut(),
@@ -520,16 +648,24 @@ fun MainScreen(viewModel: MainViewModel) {
             // Booking Success dialog modal
             val successBooking by viewModel.bookingSuccessDialog.collectAsStateWithLifecycle()
             successBooking?.let { booking ->
-                BookingSuccessDialog(booking = booking, language = onboardingLanguage, onDismiss = { viewModel.dismissSuccessDialog() })
+                val bookedMaster = mastersList.find { it.name.equals(booking.masterName, ignoreCase = true) }
+                BookingSuccessDialog(
+                    booking = booking,
+                    language = onboardingLanguage,
+                    masterAddress = bookedMaster?.address.orEmpty(),
+                    masterLat = bookedMaster?.lat ?: 41.6150,
+                    masterLon = bookedMaster?.lon ?: 2.6620,
+                    onDismiss = { viewModel.dismissSuccessDialog() }
+                )
             }
 
-            // Escrow payment checkout modal
-            val escrowBooking by viewModel.escrowCheckoutBooking.collectAsStateWithLifecycle()
-            escrowBooking?.let { booking ->
-                BookingEscrowCheckoutDialog(
+            // Studio booking confirmation modal
+            val pendingBooking by viewModel.pendingConfirmationBooking.collectAsStateWithLifecycle()
+            pendingBooking?.let { booking ->
+                BookingConfirmationDialog(
                     booking = booking,
                     viewModel = viewModel,
-                    onDismiss = { viewModel.dismissEscrowCheckout() }
+                    onDismiss = { viewModel.dismissBookingConfirmation() }
                 )
             }
 
@@ -570,8 +706,7 @@ fun MainScreen(viewModel: MainViewModel) {
             }
 
             val globalCurrency by viewModel.globalCurrency.collectAsStateWithLifecycle()
-            val isPremium by viewModel.isPremium.collectAsStateWithLifecycle()
-            val adSource by viewModel.adSource.collectAsStateWithLifecycle()
+            val isPremiumState by viewModel.isPremium.collectAsStateWithLifecycle()
             if (showGlobalSettingsDialog) {
                 GlobalSettingsDialog(
                     viewModel = viewModel,
@@ -579,9 +714,7 @@ fun MainScreen(viewModel: MainViewModel) {
                     currentCurrency = globalCurrency,
                     currentLanguage = onboardingLanguage,
                     isDarkTheme = isDarkTheme,
-                    isPremium = isPremium,
-                    currentAdSource = adSource,
-                    onAdSourceChange = { viewModel.setAdSource(it) },
+                    isPremium = isPremiumState,
                     onTogglePremium = { viewModel.togglePremium() },
                     onSkinChange = { viewModel.setSelectedSkin(it) },
                     onCurrencyChange = { viewModel.setGlobalCurrency(it) },
@@ -590,6 +723,9 @@ fun MainScreen(viewModel: MainViewModel) {
                     onDismiss = { showGlobalSettingsDialog = false }
                 )
             }
+        }
+        }
+        }
         }
     }
 }

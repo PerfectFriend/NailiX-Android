@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import android.content.Intent
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
@@ -30,6 +31,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -74,7 +76,6 @@ import com.example.ui.viewmodel.MainViewModel
 import com.example.ui.viewmodel.MasterProfile
 import com.example.ui.viewmodel.ClientProfile
 import com.example.ui.viewmodel.AggregatorReview
-import com.example.ui.viewmodel.CustomAd
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.draw.drawBehind
 import com.example.ui.theme.skinOrnament
@@ -95,8 +96,9 @@ fun LoyaltyScreenTab(viewModel: MainViewModel) {
     val context = LocalContext.current
     val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
 
+    val clientProfile by viewModel.clientProfile.collectAsStateWithLifecycle()
+
     var activeSubTab by remember { mutableStateOf("card") } // "card", "referral", "history", "challenges"
-    var simFriendName by remember { mutableStateOf("") }
 
     val activeContestsList by viewModel.activeContests.collectAsStateWithLifecycle()
     val selectedContest by viewModel.selectedContestId.collectAsStateWithLifecycle()
@@ -318,7 +320,7 @@ fun LoyaltyScreenTab(viewModel: MainViewModel) {
 
                             Spacer(modifier = Modifier.height(10.dp))
                             Text(
-                                text = "Код лояльности: ${loyalty?.referralCode ?: "VIC-8842-NIL"}",
+                                text = "Код лояльности: ${clientProfile.referralCode.ifBlank { loyalty?.referralCode?.takeIf { it.isNotBlank() && !it.startsWith("VIC-") } ?: "NLX-PENDING" }}",
                                 fontWeight = FontWeight.ExtraBold,
                                 style = MaterialTheme.typography.labelLarge,
                                 color = MaterialTheme.colorScheme.primary
@@ -519,6 +521,9 @@ fun LoyaltyScreenTab(viewModel: MainViewModel) {
                                 modifier = Modifier.padding(vertical = 8.dp)
                             )
 
+                            val myRefCode = clientProfile.referralCode.ifBlank {
+                                loyalty?.referralCode?.takeIf { it.isNotBlank() && !it.startsWith("VIC-") } ?: "NLX-PENDING"
+                            }
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -534,7 +539,7 @@ fun LoyaltyScreenTab(viewModel: MainViewModel) {
                                 Column {
                                     Text("Ваш уникальный код:", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     Text(
-                                        text = loyalty?.referralCode ?: "VIC-8842-NIL",
+                                        text = myRefCode,
                                         style = MaterialTheme.typography.titleLarge,
                                         fontWeight = FontWeight.ExtraBold,
                                         color = MaterialTheme.colorScheme.primary,
@@ -544,14 +549,13 @@ fun LoyaltyScreenTab(viewModel: MainViewModel) {
 
                                 Button(
                                     onClick = {
-                                        val code = loyalty?.referralCode ?: "VIC-8842-NIL"
                                         val textToCopy = if (onboardingLanguage == "ru") {
-                                            "Привет! Запишись на шикарный маникюр в студию NailiX, введи мой реферальный код $code и получи 200 приветственных бонусов на процедуру! Скачать приложение можно по ссылке: https://nailix.app"
+                                            "Привет! Запишись на маникюр в студию NailiX, введи мой реферальный код $myRefCode и получи 200 приветственных бонусов!"
                                         } else {
-                                            "Hello! Book a premium manicure at NAILIX studio, use my referral code $code and get 200 welcome bonuses! Download the app at: https://nailix.app"
+                                            "Hello! Book a manicure at NailiX studio, use my referral code $myRefCode and get 200 welcome bonuses!"
                                         }
                                         clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(textToCopy))
-                                        Toast.makeText(context, if (onboardingLanguage == "ru") "Ссылка с промокодом скопирована! 📋" else "Referral link copied! 📋", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, if (onboardingLanguage == "ru") "Промокод скопирован! 📋" else "Referral code copied! 📋", Toast.LENGTH_SHORT).show()
                                     },
                                     shape = RoundedCornerShape(10.dp)
                                 ) {
@@ -562,24 +566,52 @@ fun LoyaltyScreenTab(viewModel: MainViewModel) {
                             }
 
                             Spacer(modifier = Modifier.height(14.dp))
+                            val shareText = if (onboardingLanguage == "ru") {
+                                "Привет! Приглашаю в NailiX 💅 Введи мой код $myRefCode при записи и получи +200 бонусных баллов!"
+                            } else {
+                                "Join me on NailiX 💅 Use my referral code $myRefCode to get +200 bonus points!"
+                            }
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 OutlinedButton(
                                     onClick = {
-                                        Toast.makeText(context, "Имитация отправки кода в Telegram 📲", Toast.LENGTH_SHORT).show()
+                                        val tgIntent = Intent(Intent.ACTION_SEND).apply {
+                                            type = "text/plain"
+                                            putExtra(Intent.EXTRA_TEXT, shareText)
+                                            setPackage("org.telegram.messenger")
+                                        }
+                                        try {
+                                            context.startActivity(tgIntent)
+                                        } catch (_: Exception) {
+                                            val fallback = Intent.createChooser(
+                                                Intent(Intent.ACTION_SEND).apply {
+                                                    type = "text/plain"
+                                                    putExtra(Intent.EXTRA_TEXT, shareText)
+                                                },
+                                                "Поделиться кодом NailiX"
+                                            )
+                                            context.startActivity(fallback)
+                                        }
                                     },
                                     modifier = Modifier.weight(1f),
                                     shape = RoundedCornerShape(10.dp)
                                 ) {
-                                    Icon(Icons.Default.Send, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null, modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text("В Telegram", fontSize = 12.sp)
                                 }
                                 OutlinedButton(
                                     onClick = {
-                                        Toast.makeText(context, "Имитация отправки кода в WhatsApp 💬", Toast.LENGTH_SHORT).show()
+                                        val chooser = Intent.createChooser(
+                                            Intent(Intent.ACTION_SEND).apply {
+                                                type = "text/plain"
+                                                putExtra(Intent.EXTRA_TEXT, shareText)
+                                            },
+                                            "Поделиться реферальным кодом"
+                                        )
+                                        context.startActivity(chooser)
                                     },
                                     modifier = Modifier.weight(1f),
                                     shape = RoundedCornerShape(10.dp)
@@ -593,70 +625,7 @@ fun LoyaltyScreenTab(viewModel: MainViewModel) {
                     }
                 }
 
-                // SIMULATOR FOR CONVENIENT USER TESTING & GRADING
-                item {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.5f)),
-                        shape = RoundedCornerShape(20.dp),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.tertiary.copy(alpha = 0.3f))
-                    ) {
-                        Column(modifier = Modifier.padding(18.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.Construction, contentDescription = null, tint = MaterialTheme.colorScheme.onTertiaryContainer, modifier = Modifier.size(20.dp))
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = "Симулятор реферальной системы 🚀",
-                                    fontWeight = FontWeight.Bold,
-                                    style = MaterialTheme.typography.titleSmall,
-                                    color = MaterialTheme.colorScheme.onTertiaryContainer
-                                )
-                            }
-                            Text(
-                                text = "Инструмент проверки: введите имя подруги, чтобы сымитировать ее успешное приглашение и мгновенно увидеть начисление бонусов в реальном времени!",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.8f),
-                                modifier = Modifier.padding(vertical = 6.dp)
-                            )
-
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                OutlinedTextField(
-                                    value = simFriendName,
-                                    onValueChange = { simFriendName = it },
-                                    placeholder = { Text("Имя подруги (напр. Дарья)") },
-                                    singleLine = true,
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        focusedBorderColor = MaterialTheme.colorScheme.tertiary,
-                                        unfocusedBorderColor = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.5f)
-                                    ),
-                                    modifier = Modifier.weight(1f).testTag("sim_friend_input"),
-                                    shape = RoundedCornerShape(10.dp)
-                                )
-                                Button(
-                                    onClick = {
-                                        if (simFriendName.isNotBlank()) {
-                                            viewModel.simulateReferralInvite(simFriendName)
-                                            simFriendName = ""
-                                        }
-                                    },
-                                    enabled = simFriendName.isNotBlank(),
-                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary),
-                                    modifier = Modifier.height(52.dp).testTag("sim_friend_apply"),
-                                    shape = RoundedCornerShape(10.dp)
-                                ) {
-                                    Text("Пригласить", color = MaterialTheme.colorScheme.onTertiary)
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // ENTER FRIEND'S CODE
+                // ENTER FRIEND'S CODE (Real Firestore Verification)
                 item {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
@@ -671,7 +640,7 @@ fun LoyaltyScreenTab(viewModel: MainViewModel) {
                                 style = MaterialTheme.typography.titleSmall
                             )
                             Text(
-                                text = "Если вас пригласила подруга, укажите её промокод, чтобы получить приветственные 200 баллов на ваш баланс!",
+                                text = "Укажите реальный промокод подруги (например NLX-XXXXXX), чтобы активировать приветственные 200 баллов через облачную проверку.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(vertical = 6.dp)
@@ -685,7 +654,7 @@ fun LoyaltyScreenTab(viewModel: MainViewModel) {
                                 OutlinedTextField(
                                     value = referralInput,
                                     onValueChange = { viewModel.referralInputCode.value = it },
-                                    placeholder = { Text("VIC-XXXX-XXX") },
+                                    placeholder = { Text("NLX-XXXXXX") },
                                     singleLine = true,
                                     modifier = Modifier.weight(1f).testTag("referral_code_input"),
                                     shape = RoundedCornerShape(10.dp)
@@ -1506,6 +1475,7 @@ fun LoyaltyBonusesDialog(
     onDismiss: () -> Unit
 ) {
     val loyalty by viewModel.loyaltyInfo.collectAsStateWithLifecycle()
+    val clientProfile by viewModel.clientProfile.collectAsStateWithLifecycle()
     val onboardingLanguage by viewModel.onboardingLanguage.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
@@ -1656,14 +1626,14 @@ fun LoyaltyBonusesDialog(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = loyalty?.referralCode ?: "VIC-8842-NIL",
+                                    text = clientProfile.referralCode.ifBlank { loyalty?.referralCode?.takeIf { it.isNotBlank() && !it.startsWith("VIC-") } ?: "NLX-PENDING" },
                                     fontWeight = FontWeight.ExtraBold,
                                     fontSize = 16.sp,
                                     color = MaterialTheme.colorScheme.primary
                                 )
                                 Button(
                                     onClick = {
-                                        val code = loyalty?.referralCode ?: "VIC-8842-NIL"
+                                        val code = clientProfile.referralCode.ifBlank { loyalty?.referralCode?.takeIf { it.isNotBlank() && !it.startsWith("VIC-") } ?: "NLX-PENDING" }
                                         val textToCopy = if (onboardingLanguage == "ru") {
                                             "Привет! Запишись на шикарный маникюр в студию NailiX, введи мой реферальный код $code и получи 200 приветственных бонусов на процедуру! Ссылка: https://nailix.app"
                                         } else {

@@ -1,0 +1,206 @@
+{
+  "entities": {
+    "CloudUserProfile": {
+      "title": "CloudUserProfile",
+      "description": "Authenticated user profile, preferences, loyalty balance, and personal referral code.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Firebase Auth UID of the owner." },
+        "displayName": { "type": "string", "description": "User display name." },
+        "role": { "type": "string", "enum": ["client", "master"], "description": "Active workspace mode." },
+        "referralCode": { "type": "string", "description": "Unique NLX referral code." },
+        "loyaltyPoints": { "type": "integer", "description": "Current loyalty bonus points balance." },
+        "loyaltyLevel": { "type": "string", "enum": ["Silver", "Gold", "Platinum"], "description": "Club tier." },
+        "friendsReferred": { "type": "integer", "description": "Count of redeemed referrals." },
+        "homeAddress": { "type": "string", "description": "Optional client home address." },
+        "workAddress": { "type": "string", "description": "Optional client work address." },
+        "phone": { "type": "string", "description": "Optional user contact phone." },
+        "email": { "type": "string", "description": "Optional user contact email." },
+        "preferredSkin": { "type": "string", "description": "Selected visual theme skin." },
+        "preferredCurrency": { "type": "string", "description": "Selected currency ISO code." },
+        "preferredLanguage": { "type": "string", "description": "Selected UI language code." },
+        "fcmToken": { "type": "string", "description": "Optional FCM registration token." },
+        "claimedReferralCode": { "type": "string", "description": "Optional referral code redeemed by this user." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp (FieldValue.serverTimestamp())." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp (FieldValue.serverTimestamp())." }
+      },
+      "required": ["userId", "displayName", "role", "referralCode", "loyaltyPoints", "loyaltyLevel", "friendsReferred", "createdAt", "updatedAt"]
+    },
+    "CloudLoyaltyTransaction": {
+      "title": "CloudLoyaltyTransaction",
+      "description": "Ledger entry for bonus point accruals or redemptions.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Owner Firebase Auth UID." },
+        "title": { "type": "string", "description": "Human-readable transaction title." },
+        "points": { "type": "integer", "description": "Signed points delta." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp." }
+      },
+      "required": ["userId", "title", "points", "createdAt"]
+    },
+    "CloudMasterProfile": {
+      "title": "CloudMasterProfile",
+      "description": "Public master profile managed by its authenticated owner.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Owner Firebase Auth UID." },
+        "visibility": { "type": "string", "enum": ["public"], "description": "Catalog visibility marker." },
+        "name": { "type": "string", "description": "Master or studio display name." },
+        "address": { "type": "string", "description": "Salon location address." },
+        "workingSchedule": { "type": "string", "description": "Working days and hours." },
+        "experienceYears": { "type": "integer", "description": "Years of professional experience." },
+        "languages": { "type": "array", "description": "Spoken languages (up to 10)." },
+        "instagramUsername": { "type": "string", "description": "Instagram handle." },
+        "currency": { "type": "string", "description": "Master default currency code." },
+        "ratingAvg": { "type": "number", "description": "Average rating (1.0 - 5.0)." },
+        "ratingCount": { "type": "integer", "description": "Total rating count." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp." }
+      },
+      "required": ["userId", "visibility", "name", "address", "workingSchedule", "experienceYears", "languages", "instagramUsername", "currency", "ratingAvg", "ratingCount", "createdAt", "updatedAt"]
+    },
+    "CloudService": {
+      "title": "CloudService",
+      "description": "Salon service card synchronized to Firestore.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Creator Firebase Auth UID." },
+        "visibility": { "type": "string", "enum": ["public"], "description": "Catalog visibility marker." },
+        "name": { "type": "string", "description": "Service name." },
+        "category": { "type": "string", "description": "Service category." },
+        "price": { "type": "number", "description": "Base service price." },
+        "durationMin": { "type": "integer", "description": "Duration in minutes." },
+        "description": { "type": "string", "description": "Service details." },
+        "imageUrl": { "type": "string", "description": "Optional image URL." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp." }
+      },
+      "required": ["userId", "visibility", "name", "category", "price", "durationMin", "description", "createdAt", "updatedAt"]
+    },
+    "CloudBooking": {
+      "title": "CloudBooking",
+      "description": "Studio appointment shared only between clientUid and masterUid.",
+      "type": "object",
+      "properties": {
+        "clientUid": { "type": "string", "description": "Client Firebase Auth UID." },
+        "masterUid": { "type": "string", "description": "Optional Master Firebase Auth UID." },
+        "serviceName": { "type": "string", "description": "Booked service name." },
+        "serviceCategory": { "type": "string", "description": "Booked service category." },
+        "date": { "type": "string", "description": "Appointment date label." },
+        "timeSlot": { "type": "string", "description": "Appointment start time slot." },
+        "masterName": { "type": "string", "description": "Master display name." },
+        "price": { "type": "number", "description": "Agreed appointment price." },
+        "clientName": { "type": "string", "description": "Client display name." },
+        "clientPhone": { "type": "string", "description": "Client phone number." },
+        "paymentMethod": { "type": "string", "enum": ["studio_visit", "studio_transfer"], "description": "Confirmed studio payment mode." },
+        "status": { "type": "string", "enum": ["Подтверждена", "Выполнена", "Отменена"], "description": "Booking lifecycle state." },
+        "ticketToken": { "type": "string", "description": "16-char SHA-256 check-in token." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp." }
+      },
+      "required": ["clientUid", "serviceName", "serviceCategory", "date", "timeSlot", "masterName", "price", "clientName", "clientPhone", "paymentMethod", "status", "ticketToken", "createdAt", "updatedAt"]
+    },
+    "CloudNailArt": {
+      "title": "CloudNailArt",
+      "description": "Published nail art design item in the shared studio catalog.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Creator Firebase Auth UID." },
+        "visibility": { "type": "string", "enum": ["public"], "description": "Catalog visibility marker." },
+        "title": { "type": "string", "description": "Design title." },
+        "masterName": { "type": "string", "description": "Master author name." },
+        "complexity": { "type": "string", "description": "Complexity tier." },
+        "extraPrice": { "type": "number", "description": "Add-on surcharge." },
+        "imageUrl": { "type": "string", "description": "Image URL." },
+        "likes": { "type": "integer", "description": "Like counter." },
+        "views": { "type": "integer", "description": "View counter." },
+        "description": { "type": "string", "description": "Design description." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp." }
+      },
+      "required": ["userId", "visibility", "title", "masterName", "complexity", "extraPrice", "imageUrl", "likes", "views", "description", "createdAt", "updatedAt"]
+    },
+    "CloudReview": {
+      "title": "CloudReview",
+      "description": "Client or master review authored by an authenticated user.",
+      "type": "object",
+      "properties": {
+        "authorUid": { "type": "string", "description": "Author Firebase Auth UID." },
+        "visibility": { "type": "string", "enum": ["public"], "description": "Review visibility marker." },
+        "targetId": { "type": "string", "description": "Target master ID or profile ID." },
+        "targetType": { "type": "string", "enum": ["master", "client"], "description": "Target entity type." },
+        "authorName": { "type": "string", "description": "Reviewer display name." },
+        "rating": { "type": "integer", "description": "Star rating (1..5)." },
+        "comment": { "type": "string", "description": "Review text." },
+        "dateStr": { "type": "string", "description": "Formatted review date." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp." }
+      },
+      "required": ["authorUid", "visibility", "targetId", "targetType", "authorName", "rating", "comment", "dateStr", "createdAt", "updatedAt"]
+    },
+    "CloudReferralCode": {
+      "title": "CloudReferralCode",
+      "description": "Verifiable referral code document allowing cross-account redemption.",
+      "type": "object",
+      "properties": {
+        "ownerUid": { "type": "string", "description": "UID of the user who owns this referral code." },
+        "ownerName": { "type": "string", "description": "Display name of the referrer." },
+        "redemptionCount": { "type": "integer", "description": "Total number of valid redemptions." },
+        "lastRedeemedBy": { "type": "string", "description": "UID of the last user who redeemed this code." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp." }
+      },
+      "required": ["ownerUid", "ownerName", "redemptionCount", "createdAt", "updatedAt"]
+    },
+    "CloudReferralRedemption": {
+      "title": "CloudReferralRedemption",
+      "description": "Single-use redemption receipt proving claimerUid activated a referral code.",
+      "type": "object",
+      "properties": {
+        "claimerUid": { "type": "string", "description": "UID of the user who claimed the code." },
+        "claimerName": { "type": "string", "description": "Display name of the claimer." },
+        "code": { "type": "string", "description": "Redeemed referral code." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp." }
+      },
+      "required": ["claimerUid", "claimerName", "code", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/CloudUserProfile" },
+      "description": "Owner-isolated user profile, preferences, and loyalty balance."
+    },
+    "/users/{userId}/loyalty_transactions/{txId}": {
+      "schema": { "$ref": "#/entities/CloudLoyaltyTransaction" },
+      "description": "Owner-isolated bonus transaction ledger."
+    },
+    "/masters/{masterId}": {
+      "schema": { "$ref": "#/entities/CloudMasterProfile" },
+      "description": "Public master profiles created and managed by authenticated masters."
+    },
+    "/services/{serviceId}": {
+      "schema": { "$ref": "#/entities/CloudService" },
+      "description": "Shared salon service catalog managed by service creators."
+    },
+    "/bookings/{bookingId}": {
+      "schema": { "$ref": "#/entities/CloudBooking" },
+      "description": "Private appointment bookings accessible only to clientUid and masterUid."
+    },
+    "/nailArts/{artId}": {
+      "schema": { "$ref": "#/entities/CloudNailArt" },
+      "description": "Shared nail art inspiration catalog."
+    },
+    "/reviews/{reviewId}": {
+      "schema": { "$ref": "#/entities/CloudReview" },
+      "description": "Verified user reviews for masters and clients."
+    },
+    "/referralCodes/{code}": {
+      "schema": { "$ref": "#/entities/CloudReferralCode" },
+      "description": "Shareable referral codes looked up directly by code ID."
+    },
+    "/referralCodes/{code}/redemptions/{claimerUid}": {
+      "schema": { "$ref": "#/entities/CloudReferralRedemption" },
+      "description": "Single-use referral redemption receipts keyed by claimerUid."
+    }
+  }
+}

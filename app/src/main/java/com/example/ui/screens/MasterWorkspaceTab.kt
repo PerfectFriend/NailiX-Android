@@ -30,6 +30,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -80,7 +81,6 @@ import com.example.ui.viewmodel.MainViewModel
 import com.example.ui.viewmodel.MasterProfile
 import com.example.ui.viewmodel.ClientProfile
 import com.example.ui.viewmodel.AggregatorReview
-import com.example.ui.viewmodel.CustomAd
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.draw.drawBehind
 import com.example.ui.theme.skinOrnament
@@ -832,41 +832,46 @@ fun MasterWorkspaceTab(viewModel: MainViewModel) {
                         )
                         Spacer(modifier = Modifier.height(10.dp))
 
-                        // Smart client retention reminder cards
-                        listOf(
-                            Triple("Анна Смирнова", "+34 612 888 123", "24 дня назад"),
-                            Triple("Ольга Петрова", "+34 645 999 456", "22 дня назад")
-                        ).forEach { (clientName, clientPhone, daysAgo) ->
-                            Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = Color(0xFFF8FAFC),
-                                border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(10.dp).fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
+                        // Real client follow-up cards from actual bookings
+                        if (masterBookings.isEmpty()) {
+                            Text(
+                                text = "Пока нет записей от клиентов для напоминания о коррекции.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else {
+                            masterBookings.take(5).forEach { bk ->
+                                Surface(
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
                                 ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(clientName, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
-                                        Text("Визит: $daysAgo • Пора на коррекцию 💅", fontSize = 11.sp, color = Color(0xFFD97706), fontWeight = FontWeight.Bold)
-                                    }
-                                    IconButton(
-                                        onClick = {
-                                            val smsText = "Здравствуйте, $clientName! Прошло более 3 недель с вашего визита в NailiX. Самое время обновить маникюр! Для вас есть свободные окошки на этой неделе ✨"
-                                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("sms:$clientPhone")).apply {
-                                                putExtra("sms_body", smsText)
-                                            }
-                                            try {
-                                                context.startActivity(intent)
-                                            } catch (e: Exception) {
-                                                Toast.makeText(context, "Напоминание подготовлено: $clientPhone", Toast.LENGTH_SHORT).show()
-                                            }
-                                        },
-                                        modifier = Modifier.size(36.dp)
+                                    Row(
+                                        modifier = Modifier.padding(10.dp).fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
-                                        Icon(Icons.Default.Send, contentDescription = "Send Reminder", tint = Color(0xFF6366F1), modifier = Modifier.size(18.dp))
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(bk.clientName, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
+                                            Text("Визит: ${bk.date} (${bk.serviceName})", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+                                        }
+                                        IconButton(
+                                            onClick = {
+                                                val smsText = "Здравствуйте, ${bk.clientName}! Напоминаем о коррекции маникюра в студии NailiX ✨"
+                                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse("sms:${bk.clientPhone}")).apply {
+                                                    putExtra("sms_body", smsText)
+                                                }
+                                                try {
+                                                    context.startActivity(intent)
+                                                } catch (_: Exception) {
+                                                    Toast.makeText(context, "SMS-клиент недоступен (${bk.clientPhone})", Toast.LENGTH_SHORT).show()
+                                                }
+                                            },
+                                            modifier = Modifier.size(48.dp)
+                                        ) {
+                                            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send Reminder", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                                        }
                                     }
                                 }
                             }
@@ -875,7 +880,7 @@ fun MasterWorkspaceTab(viewModel: MainViewModel) {
                 }
             }
 
-            // AD CONSTRUCTOR CARD FOR MASTERS
+            // NOTIFICATION & PROMO BROADCAST CARD
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth().testTag("ad_constructor_card"),
@@ -893,209 +898,72 @@ fun MasterWorkspaceTab(viewModel: MainViewModel) {
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "📢 Конструктор рекламных баннеров",
+                                text = "📢 Уведомление об акции",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.primary
                             )
                         }
-                        
+
                         Spacer(modifier = Modifier.height(6.dp))
-                        
+
                         Text(
-                            text = "Создайте рекламное объявление и привлекайте клиентов! Баннер будет показываться всем пользователям бесплатной версии.",
+                            text = "Сформируйте локальное уведомление с акцией или напомните себе о расписании записей.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        
+
                         Spacer(modifier = Modifier.height(12.dp))
 
                         OutlinedTextField(
                             value = adTitle,
                             onValueChange = { adTitle = it },
-                            label = { Text("Заголовок рекламы") },
+                            label = { Text("Заголовок акции") },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth().testTag("ad_construct_title")
                         )
                         Spacer(modifier = Modifier.height(8.dp))
-                        
+
                         OutlinedTextField(
                             value = adDesc,
                             onValueChange = { adDesc = it },
-                            label = { Text("Описание акции") },
+                            label = { Text("Текст акции") },
                             maxLines = 2,
                             modifier = Modifier.fillMaxWidth().testTag("ad_construct_desc")
                         )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedTextField(
-                                value = adDiscount,
-                                onValueChange = { adDiscount = it },
-                                label = { Text("Бейдж (скидка/текст)") },
-                                singleLine = true,
-                                modifier = Modifier.weight(1f).testTag("ad_construct_badge")
-                            )
-                            OutlinedTextField(
-                                value = adCta,
-                                onValueChange = { adCta = it },
-                                label = { Text("Текст кнопки") },
-                                singleLine = true,
-                                modifier = Modifier.weight(1f).testTag("ad_construct_cta")
-                            )
-                        }
-                        
+
                         Spacer(modifier = Modifier.height(12.dp))
-                        
-                        Text("Цветовой стиль баннера:", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            listOf(
-                                "Pink" to Color(0xFFE1306C),
-                                "Gold" to Color(0xFFD97706),
-                                "Cyan" to Color(0xFF0891B2),
-                                "Purple" to Color(0xFF7C3AED),
-                                "Green" to Color(0xFF16A34A)
-                            ).forEach { (name, color) ->
-                                val isSelected = adColor == name
-                                Box(
-                                    modifier = Modifier
-                                        .size(36.dp)
-                                        .background(color, shape = CircleShape)
-                                        .border(
-                                            width = if (isSelected) 3.dp else 0.dp,
-                                            color = if (isSelected) MaterialTheme.colorScheme.onSurface else Color.Transparent,
-                                            shape = CircleShape
-                                        )
-                                        .clickable { adColor = name }
-                                        .testTag("ad_color_choice_$name"),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    if (isSelected) {
-                                        Icon(Icons.Default.Check, contentDescription = "Selected", tint = Color.White, modifier = Modifier.size(16.dp))
-                                    }
-                                }
-                            }
-                        }
-                        
-                        Spacer(modifier = Modifier.height(16.dp))
-                        
-                        // Interactive Preview Box
-                        Text("Предпросмотр баннера для клиентов:", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.outline)
-                        Spacer(modifier = Modifier.height(4.dp))
-                        
-                        val bannerBg = when (adColor) {
-                            "Pink" -> Color(0xFFFFF1F2)
-                            "Gold" -> Color(0xFFFEF3C7)
-                            "Cyan" -> Color(0xFFECFEFF)
-                            "Purple" -> Color(0xFFF5F3FF)
-                            "Green" -> Color(0xFFF0FDF4)
-                            else -> Color(0xFFFFF1F2)
-                        }
-                        val bannerBorder = when (adColor) {
-                            "Pink" -> Color(0xFFFDA4AF)
-                            "Gold" -> Color(0xFFFCD34D)
-                            "Cyan" -> Color(0xFF67E8F9)
-                            "Purple" -> Color(0xFFC7D2FE)
-                            "Green" -> Color(0xFF86EFAC)
-                            else -> Color(0xFFFDA4AF)
-                        }
-                        val bannerAccent = when (adColor) {
-                            "Pink" -> Color(0xFFE1306C)
-                            "Gold" -> Color(0xFFD97706)
-                            "Cyan" -> Color(0xFF0891B2)
-                            "Purple" -> Color(0xFF7C3AED)
-                            "Green" -> Color(0xFF16A34A)
-                            else -> Color(0xFFE1306C)
-                        }
-                        
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(10.dp),
-                            colors = CardDefaults.cardColors(containerColor = bannerBg),
-                            border = BorderStroke(1.dp, bannerBorder)
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                                    Box(
-                                        modifier = Modifier.size(36.dp).background(bannerAccent, shape = CircleShape),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        if (adDiscount.isNotEmpty()) {
-                                            Text(adDiscount, color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Black)
-                                        } else {
-                                            Icon(Icons.Default.Campaign, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
-                                        }
-                                    }
-                                    Spacer(modifier = Modifier.width(10.dp))
-                                    Column {
-                                        Text(master.name, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.Gray)
-                                        Text(adTitle, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.Black)
-                                        Text(adDesc, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = Color.DarkGray)
-                                    }
-                                }
-                                Button(
-                                    onClick = {},
-                                    colors = ButtonDefaults.buttonColors(containerColor = bannerAccent),
-                                    shape = RoundedCornerShape(6.dp),
-                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                                    modifier = Modifier.height(28.dp)
-                                ) {
-                                    Text(adCta, fontSize = 10.sp, color = Color.White, fontWeight = FontWeight.Bold)
-                                }
-                            }
-                        }
-                        
-                        Spacer(modifier = Modifier.height(16.dp))
-                        
+
                         Button(
                             onClick = {
                                 if (adTitle.isBlank() || adDesc.isBlank()) {
-                                    Toast.makeText(context, "Пожалуйста, заполните заголовок и описание рекламы!", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "Пожалуйста, заполните заголовок и текст акции.", Toast.LENGTH_SHORT).show()
                                 } else {
-                                    val newAd = CustomAd(
-                                        id = (100..99999).random(),
-                                        masterName = master.name,
-                                        title = adTitle,
-                                        description = adDesc,
-                                        discount = adDiscount,
-                                        themeColor = adColor,
-                                        ctaText = adCta
-                                    )
-                                    viewModel.addCustomAd(newAd)
-                                    viewModel.sendTestFcmPromotion(
+                                    viewModel.sendFcmPromotion(
                                         context,
-                                        "Анонс от ${master.name}: $adTitle 🎁",
-                                        "$adDesc Скидка $adDiscount по кнопке '$adCta'!",
-                                        "VIPPROMO"
+                                        "Анонс от ${master.name}: $adTitle",
+                                        adDesc,
+                                        adDiscount.ifBlank { "NAILIX" }
                                     )
-                                    Toast.makeText(context, "Ваша реклама успешно создана и отправлена в FCM Push-рассылку! 🚀", Toast.LENGTH_LONG).show()
                                 }
                             },
                             modifier = Modifier.fillMaxWidth().testTag("launch_ad_campaign_btn"),
                             shape = RoundedCornerShape(10.dp)
                         ) {
-                            Text("Запустить рекламную кампанию & Push 🚀", fontWeight = FontWeight.Bold)
+                            Text("Показать промо-уведомление", fontWeight = FontWeight.Bold)
                         }
 
                         Spacer(modifier = Modifier.height(8.dp))
                         OutlinedButton(
                             onClick = {
-                                viewModel.sendTestFcmAppointmentReminder(context)
-                                Toast.makeText(context, "💅 Тестовое FCM-напоминание отправлено в шторку Android!", Toast.LENGTH_SHORT).show()
+                                viewModel.sendFcmAppointmentReminder(context)
                             },
                             modifier = Modifier.fillMaxWidth().testTag("master_test_fcm_reminder_btn"),
                             shape = RoundedCornerShape(10.dp)
                         ) {
                             Icon(Icons.Default.NotificationsActive, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("Протестировать FCM Напоминание клиентам 🔔", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text("Проверить напоминание о записи 🔔", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }

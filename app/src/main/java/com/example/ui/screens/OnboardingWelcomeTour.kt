@@ -14,9 +14,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bolt
+import com.google.firebase.Firebase
+import com.google.firebase.auth.auth
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -621,7 +623,7 @@ fun OnboardingWelcomeTour(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Icon(
-                        imageVector = Icons.Default.ArrowForward,
+                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
                         contentDescription = null,
                         tint = if (isDarkTheme) Color(0xFF0F172A) else Color.White,
                         modifier = Modifier.size(20.dp)
@@ -679,7 +681,7 @@ fun OnboardingWelcomeTour(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Icon(
-                            imageVector = Icons.Default.ArrowForward,
+                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
                             contentDescription = null,
                             tint = if (isDarkTheme) Color(0xFF0F172A) else Color.White,
                             modifier = Modifier.size(18.dp)
@@ -691,10 +693,19 @@ fun OnboardingWelcomeTour(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // Direct Quick Start as Guest (zero friction entry point)
+        // Direct Quick Start using authenticated Google profile
         TextButton(
-            onClick = { viewModel.quickStartAsGuest("client") },
-            modifier = Modifier.testTag("quick_guest_start_btn")
+            onClick = {
+                val user = runCatching { Firebase.auth.currentUser }.getOrNull()
+                viewModel.completeQuickStart(
+                    role = "client",
+                    fallbackName = user?.displayName.orEmpty(),
+                    fallbackEmail = user?.email.orEmpty()
+                )
+            },
+            modifier = Modifier
+                .defaultMinSize(minHeight = 48.dp)
+                .testTag("quick_guest_start_btn")
         ) {
             Icon(
                 imageVector = Icons.Default.Bolt,
@@ -704,9 +715,9 @@ fun OnboardingWelcomeTour(
             )
             Spacer(modifier = Modifier.width(4.dp))
             Text(
-                text = if (language == "ru") "⚡ Быстрый вход (войти как Гость)"
-                       else if (language == "es") "⚡ Inicio rápido (como Invitado)"
-                       else "⚡ Quick start (enter as Guest)",
+                text = if (language == "ru") "⚡ Быстрый старт (как Клиент)"
+                       else if (language == "es") "⚡ Inicio rápido (Cliente)"
+                       else "⚡ Quick start (Client)",
                 style = MaterialTheme.typography.labelMedium.copy(
                     fontWeight = FontWeight.Bold,
                     fontSize = 13.sp,

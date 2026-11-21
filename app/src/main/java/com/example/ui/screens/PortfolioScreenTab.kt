@@ -1,7 +1,11 @@
 package com.example.ui.screens
 
+import android.content.Intent
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
@@ -27,6 +31,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -574,12 +579,27 @@ private fun InstagramFeedPostCard(
                         )
                     }
 
+                    val shareContext = LocalContext.current
                     IconButton(
-                        onClick = {},
+                        onClick = {
+                            val shareText = buildString {
+                                append("Работа мастера @${post.username} в NailiX")
+                                if (post.caption.isNotBlank()) append(": ${post.caption}")
+                                if (!post.originalUrl.isNullOrBlank()) append("\n${post.originalUrl}")
+                            }
+                            val chooser = Intent.createChooser(
+                                Intent(Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(Intent.EXTRA_TEXT, shareText)
+                                },
+                                "Поделиться работой NailiX"
+                            )
+                            shareContext.startActivity(chooser)
+                        },
                         modifier = Modifier.size(38.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Send,
+                            imageVector = Icons.AutoMirrored.Filled.Send,
                             contentDescription = "Поделиться",
                             tint = MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier.size(22.dp)
@@ -700,7 +720,7 @@ private fun InstagramFeedPostCard(
                                     newCommentText = ""
                                 }) {
                                     Icon(
-                                        imageVector = Icons.Default.Send,
+                                        imageVector = Icons.AutoMirrored.Filled.Send,
                                         contentDescription = "Отправить",
                                         tint = MaterialTheme.colorScheme.primary
                                     )
@@ -735,6 +755,16 @@ private fun InstagramImportDialog(
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
+    val instagramError by viewModel.instagramError.collectAsStateWithLifecycle()
+    val galleryPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickMultipleVisualMedia(20)
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            viewModel.importLocalGalleryPhotos(uris)
+            Toast.makeText(context, "Импортировано ${uris.size} фото из галереи!", Toast.LENGTH_SHORT).show()
+            onDismiss()
+        }
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -904,37 +934,69 @@ private fun InstagramImportDialog(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(20.dp))
+                if (instagramError != null) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.errorContainer,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = instagramError.orEmpty(),
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(10.dp)
+                        )
+                    }
+                }
 
-                // Action buttons: Top-20 Popularity Import + Refresh Sync
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Real multi-photo device gallery import (Google Play Photo Picker compliant)
                 Button(
                     onClick = {
+                        galleryPickerLauncher.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                        )
+                    },
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp)
+                        .testTag("import_gallery_photos_button")
+                ) {
+                    Icon(Icons.Default.PhotoLibrary, contentDescription = null, modifier = Modifier.size(20.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Выбрать фото из галереи (до 20)", fontWeight = FontWeight.Bold)
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Action buttons: Top-20 Popularity Import + Refresh Sync
+                OutlinedButton(
+                    onClick = {
                         viewModel.authorizeAndImportInstagram(instagramUsername) {
-                            Toast.makeText(context, "Топ-20 постов по популярности успешно импортированы! 🎉", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "Посты из @$instagramUsername успешно импортированы!", Toast.LENGTH_SHORT).show()
                         }
                     },
                     enabled = !parsingLoading,
                     shape = RoundedCornerShape(14.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(52.dp)
-                        .testTag("parse_instagram_top20_button"),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary
-                    )
+                        .height(50.dp)
+                        .testTag("parse_instagram_top20_button")
                 ) {
                     if (parsingLoading) {
                         CircularProgressIndicator(
-                            modifier = Modifier.size(22.dp),
-                            color = MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier.size(20.dp),
                             strokeWidth = 2.5.dp
                         )
                         Spacer(modifier = Modifier.width(10.dp))
-                        Text("Импорт Топ-20...", fontWeight = FontWeight.Bold)
+                        Text("Загрузка из Instagram...", fontWeight = FontWeight.Bold)
                     } else {
                         Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(20.dp))
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("⚡ Импортировать Топ-20 по популярности", fontWeight = FontWeight.Bold)
+                        Text("Импортировать публичные посты", fontWeight = FontWeight.Bold)
                     }
                 }
 
@@ -943,7 +1005,6 @@ private fun InstagramImportDialog(
                 OutlinedButton(
                     onClick = {
                         viewModel.triggerInstagramParsing()
-                        Toast.makeText(context, "Запущена синхронизация с Instagram...", Toast.LENGTH_SHORT).show()
                     },
                     enabled = !parsingLoading && instagramUsername.isNotBlank(),
                     shape = RoundedCornerShape(14.dp),
@@ -954,7 +1015,7 @@ private fun InstagramImportDialog(
                 ) {
                     Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Синхронизировать новые посты", fontWeight = FontWeight.SemiBold)
+                    Text("Обновить профиль", fontWeight = FontWeight.SemiBold)
                 }
 
                 Spacer(modifier = Modifier.height(6.dp))
@@ -1252,6 +1313,14 @@ private fun CreateNewManicurePostDialog(
         "https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?w=800"
     )
 
+    val singlePhotoLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            selectedPhotoUrl = uri.toString()
+        }
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
@@ -1265,8 +1334,22 @@ private fun CreateNewManicurePostDialog(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
+                OutlinedButton(
+                    onClick = {
+                        singlePhotoLauncher.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Icon(Icons.Default.PhotoLibrary, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Выбрать фото из галереи телефона")
+                }
+
                 Text(
-                    text = "Выберите фото работы и добавьте описание к публикации:",
+                    text = "Или выберите обложку студии:",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

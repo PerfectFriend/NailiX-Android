@@ -110,6 +110,10 @@ class AppRepository(private val db: AppDatabase) {
         bookingDao.updateBookingStatus(id, status)
     }
 
+    suspend fun rescheduleBooking(id: Int, newDate: String, newTimeSlot: String) {
+        bookingDao.updateBookingSchedule(id, newDate, newTimeSlot)
+    }
+
     suspend fun deleteBooking(id: Int, bookingPrice: Double) {
         bookingDao.deleteBookingById(id)
         reminderDao.deleteRemindersForBooking(id)
@@ -162,9 +166,8 @@ class AppRepository(private val db: AppDatabase) {
         )
     }
 
-    suspend fun claimReferral(code: String) {
+    suspend fun claimReferral(code: String, inviterName: String = "Подруга ($code)") {
         val loyalty = loyaltyDao.getLoyaltyDirect() ?: UserLoyalty()
-        // Claiming referral awards 200 points to user and increments referred friends count
         val updatedLoyalty = loyalty.copy(
             points = loyalty.points + 200,
             friendsReferred = loyalty.friendsReferred + 1
@@ -172,46 +175,16 @@ class AppRepository(private val db: AppDatabase) {
         loyaltyDao.insertOrUpdateLoyalty(updatedLoyalty)
         loyaltyTransactionDao.insertTransaction(
             LoyaltyTransaction(
-                title = "Активация кода подруги: $code 🎁",
+                title = "Активация кода $code ($inviterName) 🎁",
                 points = 200
             )
         )
         referredFriendDao.insertReferredFriend(
             ReferredFriend(
-                name = "Подруга ($code)",
-                status = "Ввели код подруги 🎉",
+                name = inviterName,
+                status = "Код $code активирован 🎉",
                 rewardPoints = 200,
                 date = java.text.SimpleDateFormat("dd.MM.yyyy", java.util.Locale.getDefault()).format(java.util.Date())
-            )
-        )
-    }
-
-    suspend fun simulateReferralInvite(friendName: String) {
-        val loyalty = loyaltyDao.getLoyaltyDirect() ?: UserLoyalty()
-        val newFriendsCount = loyalty.friendsReferred + 1
-        val isFirstVisit = (1..2).random() == 1
-        val status = if (isFirstVisit) "Завершила визит 🎉" else "Зарегистрировалась 📱"
-        val bonus = if (isFirstVisit) 200 else 50 // Registered friend gives 50 points, completed visit gives 200 points!
-        
-        val updatedLoyalty = loyalty.copy(
-            points = loyalty.points + bonus,
-            friendsReferred = newFriendsCount
-        )
-        loyaltyDao.insertOrUpdateLoyalty(updatedLoyalty)
-        
-        referredFriendDao.insertReferredFriend(
-            ReferredFriend(
-                name = friendName,
-                status = status,
-                rewardPoints = bonus,
-                date = java.text.SimpleDateFormat("dd.MM.yyyy", java.util.Locale.getDefault()).format(java.util.Date())
-            )
-        )
-        
-        loyaltyTransactionDao.insertTransaction(
-            LoyaltyTransaction(
-                title = "Приглашение: $friendName ($status)",
-                points = bonus
             )
         )
     }
@@ -248,20 +221,9 @@ class AppRepository(private val db: AppDatabase) {
     suspend fun ensureLoyaltyInitialized() {
         val current = loyaltyDao.getLoyaltyDirect()
         if (current == null) {
-            loyaltyDao.insertOrUpdateLoyalty(UserLoyalty(points = 250, friendsReferred = 1))
-            
-            // Insert default transactions
-            loyaltyTransactionDao.insertTransaction(LoyaltyTransaction(title = "Приветственный бонус при регистрации 🌸", points = 150))
-            loyaltyTransactionDao.insertTransaction(LoyaltyTransaction(title = "Подписка на уведомления в Telegram 📢", points = 100))
-            
-            // Insert a default referred friend
-            referredFriendDao.insertReferredFriend(
-                ReferredFriend(
-                    name = "Анна Смирнова",
-                    status = "Зарегистрировалась 📱",
-                    rewardPoints = 50,
-                    date = "12.07.2026"
-                )
+            loyaltyDao.insertOrUpdateLoyalty(UserLoyalty(points = 150, friendsReferred = 0))
+            loyaltyTransactionDao.insertTransaction(
+                LoyaltyTransaction(title = "Приветственный бонус при регистрации 🌸", points = 150)
             )
         }
     }
@@ -450,49 +412,6 @@ class AppRepository(private val db: AppDatabase) {
         BaseDesignItem(10, "Готический Черный Матовый", "Средние", "Стилет", "Темный", "Угольно-черный цвет в велюровом исполнении с инкрустацией черными стразами у кутикулы.", "https://images.unsplash.com/photo-1607779097040-26e80aa78e66?w=500&auto=format&fit=crop&q=60")
     )
 
-    // Simulated Instagram parsed portfolio items
-    val mockInstagramPosts = listOf(
-        InstagramPost(
-            1,
-            "https://images.unsplash.com/photo-1604303739265-fd53384d78af?w=600&auto=format&fit=crop&q=60",
-            "Освежили весенний маникюр для прекрасной Елены! 💅 Комбинированный маникюр + укрепление базой + нежный молочный оттенок с акварельным стемпингом. #маникюрспб #комбиманикюр #стемпинг",
-            "https://instagram.com/p/C7W90axILsN/",
-            "04.07.2026",
-            124
-        ),
-        InstagramPost(
-            2,
-            "https://images.unsplash.com/photo-1610992015732-2449b76344cc?w=600&auto=format&fit=crop&q=60",
-            "Дерзкий неон для нашей постоянной гостьи! 🔥 Четкий мягкий квадрат с кислотно-оранжевыми торцами на нюдовой подложке. Как вам такой тренд этого лета? #неоновыйманикюр #френчногти #дизайнногтей",
-            "https://instagram.com/p/C8Z71axMNbY/",
-            "02.07.2026",
-            218
-        ),
-        InstagramPost(
-            3,
-            "https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?w=600&auto=format&fit=crop&q=60",
-            "Аппаратный SMART педикюр со спа-уходом от Карины. Идеальные пяточки, мягкий пилинг и сияющие пальчики. Готовы покорять босоножками! 👡 #смартпедикюр #педикюрспб #спауход ног",
-            "https://instagram.com/p/C9Y62asXPlM/",
-            "30.06.2026",
-            95
-        ),
-        InstagramPost(
-            4,
-            "https://images.unsplash.com/photo-1632345031435-8797b2d58045?w=600&auto=format&fit=crop&q=60",
-            "Элегантная втирка Единорог 🦄 на нежно-розовом гель-лаке. Блеск переливается всеми цветами радуги под разным углом. Завораживает с первого взгляда! #втиркананогтях #нежныйдизайн #маникюридеи",
-            "https://instagram.com/p/C1A80axLKsK/",
-            "25.06.2026",
-            340
-        ),
-        InstagramPost(
-            5,
-            "https://images.unsplash.com/photo-1519014816548-bf5fe059798b?w=600&auto=format&fit=crop&q=60",
-            "Восстановление сломанного ногтя + моделирование акригелем. Вернули идеальную длину и сделали ультрамодный матовый графит. Листайте карусель, чтобы посмотреть ДО 👉 #наращиваниеногтей #ремонтногтя #акригель",
-            "https://instagram.com/p/C5F22axOImI/",
-            "18.06.2026",
-            156
-        )
-    )
 
     suspend fun ensureMasterNailArtsInitialized() {
         val existing = masterNailArtDao.getAllMasterNailArtsDirect()

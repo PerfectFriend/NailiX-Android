@@ -1,8 +1,14 @@
 package com.example.data
 
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+import java.net.InetSocketAddress
+import java.net.Socket
 import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -10,38 +16,35 @@ import java.util.Locale
 import java.util.UUID
 
 data class NodeStatus(
-    val onionAddress: String = "nailhub7xqv5p29dkmw3o4l.onion",
-    val localAddress: String = "192.168.1.145:3000",
-    val isConnected: Boolean = true,
-    val isTorRoutingEnabled: Boolean = true,
-    val latencyMs: Long = 42,
-    val cpuLoadPercent: Int = 18,
-    val npuStatus: String = "AMD Ryzen AI NPU: Активен (RDNA 3.5 / XDNA 2)",
-    val ramUsage: String = "8.4 / 32 GB",
-    val uptimeHours: Int = 168
+    val onionAddress: String = "",
+    val localAddress: String = "127.0.0.1:3000",
+    val isConnected: Boolean = false,
+    val isTorRoutingEnabled: Boolean = false,
+    val latencyMs: Long = -1L,
+    val lastCheckedAt: Long = 0L,
+    val diagnosticMessage: String = "Проверка связи не выполнялась"
 )
 
 data class SimplexQueue(
-    val queueAddress: String = "smp://simplex.nailhub.local/v1/queue_master_v3",
-    val fingerprint: String = "4F8E:91BA:220C:DD81:9AA4:31EF",
-    val unreadCount: Int = 3,
-    val totalMessages: Int = 47,
-    val isEncrypted: Boolean = true
+    val queueAddress: String = "smp://не подключено",
+    val fingerprint: String = "—",
+    val totalMessages: Int = 0,
+    val pendingOfflineCount: Int = 0
 )
 
 data class SimplexMessage(
     val id: String = UUID.randomUUID().toString().take(8),
     val timestamp: Long = System.currentTimeMillis(),
     val senderFingerprint: String,
-    val type: String, // BOOKING_REQUEST, SCHEDULE_SYNC, STATUS_ACK, PING
-    val payloadEncrypted: String,
+    val type: String,
+    val payloadSha256: String,
     val decryptedSummary: String
 )
 
 data class P2PSyncState(
-    val lastSyncTimestamp: Long = System.currentTimeMillis(),
-    val stateHash: String = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    val syncedRecordsCount: Int = 124,
+    val lastSyncTimestamp: Long = 0L,
+    val stateHash: String = "—",
+    val syncedRecordsCount: Int = 0,
     val pendingConflicts: Int = 0,
     val isSyncActive: Boolean = false
 )
@@ -68,34 +71,7 @@ object SovereignNodeManager {
     private val _simplexQueue = MutableStateFlow(SimplexQueue())
     val simplexQueue: StateFlow<SimplexQueue> = _simplexQueue.asStateFlow()
 
-    private val _simplexMessages = MutableStateFlow(
-        listOf(
-            SimplexMessage(
-                id = "msg_01",
-                timestamp = System.currentTimeMillis() - 1000 * 60 * 18,
-                senderFingerprint = "7A11:BB89:33EF:9901",
-                type = "BOOKING_REQUEST",
-                payloadEncrypted = "c21wX2VuY3J5cHRlZF9kYXRhX2hhc2hfY2xpZW50XzEwMQ==",
-                decryptedSummary = "Новая запись: Маникюр + SPA (24.10 14:00) от Клиент #7A11"
-            ),
-            SimplexMessage(
-                id = "msg_02",
-                timestamp = System.currentTimeMillis() - 1000 * 60 * 45,
-                senderFingerprint = "C044:E21A:119B:884A",
-                type = "SCHEDULE_SYNC",
-                payloadEncrypted = "c21wX3N5bmNfaGFzaF92ZWN0b3JjbG9ja185OTQ=",
-                decryptedSummary = "CRDT Синхронизация расписания: 2 новых слота от Мастера #C044"
-            ),
-            SimplexMessage(
-                id = "msg_03",
-                timestamp = System.currentTimeMillis() - 1000 * 60 * 120,
-                senderFingerprint = "NODE:BEELINK-SER9",
-                type = "STATUS_ACK",
-                payloadEncrypted = "YmVlbGlua19zZXI5X25wdV9va19oZWFsdGg=",
-                decryptedSummary = "Здоровье ноды: NPU / GPU в норме, температура 44°C, 0 ошибок"
-            )
-        )
-    )
+    private val _simplexMessages = MutableStateFlow<List<SimplexMessage>>(emptyList())
     val simplexMessages: StateFlow<List<SimplexMessage>> = _simplexMessages.asStateFlow()
 
     private val _p2pSyncState = MutableStateFlow(P2PSyncState())
@@ -104,37 +80,89 @@ object SovereignNodeManager {
     private val _roiCalc = MutableStateFlow(NodeRoiCalculation())
     val roiCalc: StateFlow<NodeRoiCalculation> = _roiCalc.asStateFlow()
 
+    private val _isNetworkOnline = MutableStateFlow(true)
+    val isNetworkOnline: StateFlow<Boolean> = _isNetworkOnline.asStateFlow()
+
+    private val _pendingOfflineQueue = MutableStateFlow<List<SimplexMessage>>(emptyList())
+    val pendingOfflineQueue: StateFlow<List<SimplexMessage>> = _pendingOfflineQueue.asStateFlow()
+
     fun updateNodeAddress(onion: String, local: String) {
+        val cleanOnion = onion.trim()
+        val cleanLocal = local.trim()
         _nodeStatus.value = _nodeStatus.value.copy(
-            onionAddress = onion.trim(),
-            localAddress = local.trim()
+            onionAddress = cleanOnion,
+            localAddress = cleanLocal,
+            isConnected = false,
+            latencyMs = -1L,
+            diagnosticMessage = "Адрес обновлён. Нажмите «Проверить связь»."
+        )
+        val fp = if (cleanLocal.isNotBlank()) sha256(cleanLocal).take(24).uppercase().chunked(4).joinToString(":") else "—"
+        _simplexQueue.value = _simplexQueue.value.copy(
+            queueAddress = if (cleanOnion.isNotBlank()) "smp://$cleanOnion" else if (cleanLocal.isNotBlank()) "smp://$cleanLocal" else "smp://не настроено",
+            fingerprint = fp
         )
     }
 
     fun toggleTorRouting(enabled: Boolean) {
         _nodeStatus.value = _nodeStatus.value.copy(
             isTorRoutingEnabled = enabled,
-            latencyMs = if (enabled) (35..65).random().toLong() else (5..15).random().toLong()
+            diagnosticMessage = if (enabled) {
+                "Tor SOCKS5 режим включён (требуется Orbot/Tor на 127.0.0.1:9050)"
+            } else {
+                "Прямое локальное TCP-подключение"
+            }
         )
     }
 
-    suspend fun pingNode(): Boolean {
-        // Simulates ping and health stats renewal
-        kotlinx.coroutines.delay(600)
-        _nodeStatus.value = _nodeStatus.value.copy(
-            isConnected = true,
-            latencyMs = if (_nodeStatus.value.isTorRoutingEnabled) (38..58).random().toLong() else (8..18).random().toLong(),
-            cpuLoadPercent = (12..28).random(),
-            uptimeHours = _nodeStatus.value.uptimeHours + 1
-        )
-        return true
+    suspend fun pingNode(): Boolean = withContext(Dispatchers.IO) {
+        val current = _nodeStatus.value
+        val (targetHost, targetPort) = if (current.isTorRoutingEnabled) {
+            "127.0.0.1" to 9050
+        } else {
+            parseHostPort(current.localAddress)
+        }
+
+        if (targetHost.isBlank() || targetPort <= 0) {
+            _nodeStatus.value = current.copy(
+                isConnected = false,
+                latencyMs = -1L,
+                lastCheckedAt = System.currentTimeMillis(),
+                diagnosticMessage = "Некорректный адрес узла (укажите host:port, например 192.168.1.50:3000)"
+            )
+            return@withContext false
+        }
+
+        val startNanos = System.nanoTime()
+        return@withContext try {
+            Socket().use { socket ->
+                socket.connect(InetSocketAddress(targetHost, targetPort), 2500)
+            }
+            val elapsedMs = ((System.nanoTime() - startNanos) / 1_000_000L).coerceAtLeast(1L)
+            _nodeStatus.value = current.copy(
+                isConnected = true,
+                latencyMs = elapsedMs,
+                lastCheckedAt = System.currentTimeMillis(),
+                diagnosticMessage = "TCP соединение с $targetHost:$targetPort успешно (${elapsedMs} мс)"
+            )
+            true
+        } catch (e: Exception) {
+            _nodeStatus.value = current.copy(
+                isConnected = false,
+                latencyMs = -1L,
+                lastCheckedAt = System.currentTimeMillis(),
+                diagnosticMessage = "Офлайн ($targetHost:$targetPort): ${e.localizedMessage ?: "узел недоступен"}"
+            )
+            false
+        }
     }
 
-    private val _isNetworkOnline = MutableStateFlow(true)
-    val isNetworkOnline: StateFlow<Boolean> = _isNetworkOnline.asStateFlow()
-
-    private val _pendingOfflineQueue = MutableStateFlow<List<SimplexMessage>>(emptyList())
-    val pendingOfflineQueue: StateFlow<List<SimplexMessage>> = _pendingOfflineQueue.asStateFlow()
+    fun parseHostPort(address: String): Pair<String, Int> {
+        val trimmed = address.trim().removePrefix("http://").removePrefix("https://").substringBefore("/")
+        val parts = trimmed.split(":")
+        val host = parts.getOrNull(0)?.trim().orEmpty()
+        val port = parts.getOrNull(1)?.trim()?.toIntOrNull() ?: 3000
+        return host to port
+    }
 
     fun updateNetworkConnectivity(online: Boolean) {
         val wasOffline = !_isNetworkOnline.value
@@ -149,50 +177,118 @@ object SovereignNodeManager {
         if (queue.isNotEmpty()) {
             _simplexMessages.value = queue + _simplexMessages.value
             _simplexQueue.value = _simplexQueue.value.copy(
-                totalMessages = _simplexQueue.value.totalMessages + queue.size,
-                unreadCount = _simplexQueue.value.unreadCount + queue.size
+                totalMessages = _simplexMessages.value.size,
+                pendingOfflineCount = 0
             )
             _pendingOfflineQueue.value = emptyList()
         }
     }
 
-    fun sendSimplexBooking(bookingId: Int, serviceName: String, clientName: String, date: String, time: String) {
+    fun recordLocalBookingEvent(bookingId: Int, serviceName: String, clientName: String, date: String, time: String) {
+        val rawSummary = "Запись #$bookingId: $serviceName ($date $time) — $clientName"
         val newMsg = SimplexMessage(
-            id = "bk_${System.currentTimeMillis().toString().takeLast(5)}",
+            id = "bk_$bookingId",
             timestamp = System.currentTimeMillis(),
-            senderFingerprint = "CLI:" + UUID.randomUUID().toString().take(8).uppercase(),
-            type = "BOOKING_REQUEST",
-            payloadEncrypted = "smp_enc_" + UUID.randomUUID().toString(),
-            decryptedSummary = "Приватная запись SimpleX: $serviceName ($date $time) для $clientName"
+            senderFingerprint = "LOCAL:${sha256(clientName).take(8).uppercase()}",
+            type = "BOOKING_EVENT",
+            payloadSha256 = sha256(rawSummary),
+            decryptedSummary = rawSummary
         )
         if (!_isNetworkOnline.value) {
             _pendingOfflineQueue.value = _pendingOfflineQueue.value + newMsg
+            _simplexQueue.value = _simplexQueue.value.copy(
+                pendingOfflineCount = _pendingOfflineQueue.value.size
+            )
         } else {
             _simplexMessages.value = listOf(newMsg) + _simplexMessages.value
             _simplexQueue.value = _simplexQueue.value.copy(
-                totalMessages = _simplexQueue.value.totalMessages + 1,
-                unreadCount = _simplexQueue.value.unreadCount + 1
+                totalMessages = _simplexMessages.value.size
             )
         }
     }
 
-    suspend fun triggerP2PSync(): P2PSyncState {
+    suspend fun computeRoomStateSnapshot(
+        bookings: List<Booking>,
+        services: List<ServiceItem>,
+        nailArts: List<MasterNailArtEntity>
+    ): P2PSyncState = withContext(Dispatchers.Default) {
         _p2pSyncState.value = _p2pSyncState.value.copy(isSyncActive = true)
-        kotlinx.coroutines.delay(800)
-        val now = System.currentTimeMillis()
-        val md = MessageDigest.getInstance("SHA-256")
-        val hashBytes = md.digest("nailhub_p2p_state_$now".toByteArray())
-        val newHash = hashBytes.joinToString("") { "%02x".format(it) }
-
+        val canonicalPayload = buildSnapshotJson(bookings, services, nailArts).toString()
+        val digestHex = sha256(canonicalPayload)
         val updated = P2PSyncState(
-            lastSyncTimestamp = now,
-            stateHash = newHash,
-            syncedRecordsCount = _p2pSyncState.value.syncedRecordsCount + (1..3).random(),
-            pendingConflicts = 0,
+            lastSyncTimestamp = System.currentTimeMillis(),
+            stateHash = digestHex,
+            syncedRecordsCount = bookings.size + services.size + nailArts.size,
+            pendingConflicts = _pendingOfflineQueue.value.size,
             isSyncActive = false
         )
         _p2pSyncState.value = updated
-        return updated
+        updated
+    }
+
+    fun exportSnapshotJson(
+        bookings: List<Booking>,
+        services: List<ServiceItem>,
+        nailArts: List<MasterNailArtEntity>
+    ): String {
+        val snapshot = buildSnapshotJson(bookings, services, nailArts)
+        val stateHash = sha256(snapshot.toString())
+        val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
+        return JSONObject().apply {
+            put("protocol", "NailiX-LocalSnapshot-v1")
+            put("export_timestamp", sdf.format(Date()))
+            put("node_local_address", _nodeStatus.value.localAddress)
+            put("node_onion", _nodeStatus.value.onionAddress)
+            put("sha256_digest", stateHash)
+            put("records_count", bookings.size + services.size + nailArts.size)
+            put("snapshot", snapshot)
+        }.toString(2)
+    }
+
+    private fun buildSnapshotJson(
+        bookings: List<Booking>,
+        services: List<ServiceItem>,
+        nailArts: List<MasterNailArtEntity>
+    ): JSONObject {
+        val bookingsArr = JSONArray().apply {
+            bookings.forEach { b ->
+                put(JSONObject().apply {
+                    put("id", b.id)
+                    put("service", b.serviceName)
+                    put("date", b.date)
+                    put("time", b.timeSlot)
+                    put("master", b.masterName)
+                    put("price", b.price)
+                    put("status", b.status)
+                })
+            }
+        }
+        val servicesArr = JSONArray().apply {
+            services.forEach { s ->
+                put(JSONObject().apply {
+                    put("id", s.id)
+                    put("name", s.name)
+                    put("category", s.category)
+                    put("price", s.price)
+                    put("durationMin", s.durationMin)
+                })
+            }
+        }
+        val artsArr = JSONArray().apply {
+            nailArts.forEach { a ->
+                put(JSONObject().apply {
+                    put("id", a.id)
+                    put("title", a.title)
+                    put("master", a.masterName)
+                    put("likes", a.likes)
+                })
+            }
+        }
+        return JSONObject().apply {
+            put("bookings", bookingsArr)
+            put("services", servicesArr)
+            put("nailArts", artsArr)
+        }
     }
 
     fun updateRoiParams(masters: Int, fee: Double, aiGens: Int) {
@@ -203,19 +299,9 @@ object SovereignNodeManager {
         )
     }
 
-    fun exportEncryptedBackupJson(): String {
-        val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
-        val dateStr = sdf.format(Date())
-        return """
-            {
-              "protocol": "NailiX-P2P-v1.0-RC1",
-              "node_onion": "${_nodeStatus.value.onionAddress}",
-              "simplex_queue": "${_simplexQueue.value.queueAddress}",
-              "export_timestamp": "$dateStr",
-              "state_hash": "${_p2pSyncState.value.stateHash}",
-              "cipher": "AES-256-GCM / Curve25519",
-              "payload_status": "SECURE_OFFLINE_VERIFIED"
-            }
-        """.trimIndent()
+    fun sha256(input: String): String {
+        val md = MessageDigest.getInstance("SHA-256")
+        val bytes = md.digest(input.toByteArray(Charsets.UTF_8))
+        return bytes.joinToString("") { "%02x".format(it) }
     }
 }

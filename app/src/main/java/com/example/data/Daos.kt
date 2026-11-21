@@ -20,6 +20,9 @@ interface BookingDao {
 
     @Query("UPDATE bookings SET status = :status WHERE id = :id")
     suspend fun updateBookingStatus(id: Int, status: String)
+
+    @Query("UPDATE bookings SET date = :date, timeSlot = :timeSlot WHERE id = :id")
+    suspend fun updateBookingSchedule(id: Int, date: String, timeSlot: String)
 }
 
 @Dao

@@ -76,7 +76,6 @@ import com.example.ui.viewmodel.MainViewModel
 import com.example.ui.viewmodel.MasterProfile
 import com.example.ui.viewmodel.ClientProfile
 import com.example.ui.viewmodel.AggregatorReview
-import com.example.ui.viewmodel.CustomAd
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.draw.drawBehind
 import com.example.ui.theme.skinOrnament
@@ -601,7 +600,7 @@ fun BookingScreenTab(viewModel: MainViewModel) {
                                     Icon(Icons.Default.Security, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        text = "🔒 Суверенный транспорт: бронь шифруется (Curve25519) и доставляется через SimpleX MQ напрямую на ноду мастера без постоянных трекеров.",
+                                        text = "☁️ Запись сохраняется в защищенном облаке Firebase (Firestore) и локально в приложении, а также планирует напоминание о визите.",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onPrimaryContainer
                                     )
@@ -609,7 +608,6 @@ fun BookingScreenTab(viewModel: MainViewModel) {
                             }
                         }
 
-                        // CONFIRM BOOKING BUTTON WITH SIMULATED LOADING
                         item {
                             if (loading) {
                                 Box(modifier = Modifier.fillMaxWidth().padding(10.dp), contentAlignment = Alignment.Center) {
@@ -619,8 +617,8 @@ fun BookingScreenTab(viewModel: MainViewModel) {
                                 Button(
                                     onClick = {
                                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                        viewModel.requestBookingEscrowCheckout()
-                                        activeStep = 1 // Reset back to step 1 for subsequent bookings
+                                        viewModel.requestBookingConfirmation()
+                                        activeStep = 1
                                     },
                                     enabled = clientName.isNotBlank() && clientPhone.isNotBlank(),
                                     modifier = Modifier
@@ -671,7 +669,14 @@ fun StepIndicator(step: Int, text: String, active: Boolean) {
 
 
 @Composable
-fun BookingSuccessDialog(booking: Booking, language: String, onDismiss: () -> Unit) {
+fun BookingSuccessDialog(
+    booking: Booking,
+    language: String,
+    masterAddress: String = "",
+    masterLat: Double = 41.6150,
+    masterLon: Double = 2.6620,
+    onDismiss: () -> Unit
+) {
     Dialog(onDismissRequest = { onDismiss() }) {
         Card(
             shape = RoundedCornerShape(24.dp),
@@ -758,7 +763,9 @@ fun BookingSuccessDialog(booking: Booking, language: String, onDismiss: () -> Un
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             showQrDialogInSuccess = true
                         },
-                        modifier = Modifier.weight(1f).height(44.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .defaultMinSize(minHeight = 48.dp),
                         shape = RoundedCornerShape(10.dp)
                     ) {
                         Icon(Icons.Default.QrCode2, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -771,7 +778,9 @@ fun BookingSuccessDialog(booking: Booking, language: String, onDismiss: () -> Un
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             com.example.util.CalendarSyncHelper.exportBookingToCalendar(context, booking)
                         },
-                        modifier = Modifier.weight(1f).height(44.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .defaultMinSize(minHeight = 48.dp),
                         shape = RoundedCornerShape(10.dp)
                     ) {
                         Icon(Icons.Default.CalendarToday, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -780,9 +789,35 @@ fun BookingSuccessDialog(booking: Booking, language: String, onDismiss: () -> Un
                     }
                 }
 
+                Spacer(modifier = Modifier.height(8.dp))
+
+                OutlinedButton(
+                    onClick = {
+                        com.example.util.LocationGeocoderHelper.openMapsDirections(
+                            context = context,
+                            label = booking.masterName,
+                            address = masterAddress,
+                            lat = masterLat,
+                            lon = masterLon
+                        )
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .defaultMinSize(minHeight = 48.dp)
+                        .testTag("success_directions_button"),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Icon(Icons.Default.Directions, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Маршрут в студию", fontWeight = FontWeight.Bold)
+                }
+
                 if (showQrDialogInSuccess) {
                     SovereignQrTicketDialog(
                         booking = booking,
+                        masterAddress = masterAddress,
+                        masterLat = masterLat,
+                        masterLon = masterLon,
                         onDismiss = { showQrDialogInSuccess = false }
                     )
                 }
@@ -791,7 +826,10 @@ fun BookingSuccessDialog(booking: Booking, language: String, onDismiss: () -> Un
 
                 Button(
                     onClick = { onDismiss() },
-                    modifier = Modifier.fillMaxWidth().height(48.dp).testTag("dismiss_success_dialog_button"),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .defaultMinSize(minHeight = 48.dp)
+                        .testTag("dismiss_success_dialog_button"),
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     Text("Отлично", fontWeight = FontWeight.Bold)
@@ -808,22 +846,21 @@ fun BookingSuccessDialog(booking: Booking, language: String, onDismiss: () -> Un
 
 
 @Composable
-fun BookingEscrowCheckoutDialog(
+fun BookingConfirmationDialog(
     booking: Booking,
     viewModel: MainViewModel,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
     val onboardingLanguage by viewModel.onboardingLanguage.collectAsStateWithLifecycle()
-    var cardNo by remember { mutableStateOf("") }
-    var expDate by remember { mutableStateOf("") }
-    var cvc by remember { mutableStateOf("") }
-    var isProcessing by remember { mutableStateOf(false) }
+    val mastersList by viewModel.mastersList.collectAsStateWithLifecycle()
+    val globalCurrency by viewModel.globalCurrency.collectAsStateWithLifecycle()
+    var selectedPaymentMethod by remember { mutableStateOf("studio_visit") }
 
-    val escrowAmount = booking.price * 0.20
-    val remainingAmount = booking.price * 0.80
+    val masterCurrency = mastersList.find { it.name.equals(booking.masterName, ignoreCase = true) }?.currency
+        ?: globalCurrency
 
-    Dialog(onDismissRequest = { if (!isProcessing) onDismiss() }) {
+    Dialog(onDismissRequest = onDismiss) {
         Card(
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             shape = RoundedCornerShape(24.dp),
@@ -834,126 +871,101 @@ fun BookingEscrowCheckoutDialog(
                 modifier = Modifier
                     .padding(20.dp)
                     .fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // Header
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Security, contentDescription = "Security logo", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp))
+                    Icon(
+                        Icons.Default.Verified,
+                        contentDescription = "Confirmation",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(26.dp)
+                    )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Secure Escrow Checkout", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                    Text(
+                        text = if (onboardingLanguage == "ru") "Подтверждение записи в студии" else "Studio Booking Confirmation",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
                 }
 
                 HorizontalDivider()
 
-                // Booking details summary
-                Column {
-                    Text("Вы записываетесь к мастеру: ", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(booking.masterName, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyLarge)
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Мастер: ${booking.masterName}", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyLarge)
                     Text("Услуга: ${booking.serviceName}", style = MaterialTheme.typography.bodyMedium)
-                    Text("Время: ${booking.date} в ${booking.timeSlot}", style = MaterialTheme.typography.bodyMedium)
+                    Text("Дата и время: ${booking.date} в ${booking.timeSlot}", style = MaterialTheme.typography.bodyMedium)
+                    Text("Клиент: ${booking.clientName} (${booking.clientPhone})", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
 
-                // Escrow Mechanics breakdown
                 Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f)),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)),
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("🛡️ Система безопасного бронирования (Escrow):", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                        Text("Для подтверждения брони списывается 20% страховой депозит. Если вы придете на сеанс, депозит покроет часть цены. Бесплатная отмена возможна более чем за 3 часа до сеанса.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Итого к оплате в студии:", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            text = viewModel.formatPrice(booking.price, masterCurrency),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
                     }
                 }
 
-                // Breakdown Calculation
-                val masterCurrency = viewModel.mastersList.value.find { it.name.equals(booking.masterName, ignoreCase = true) }?.currency ?: viewModel.globalCurrency.value
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("Полная стоимость услуги:", style = MaterialTheme.typography.bodySmall)
-                        Text(viewModel.formatPrice(booking.price, masterCurrency), style = MaterialTheme.typography.bodySmall)
-                    }
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("Депозит Escrow (20% сейчас):", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
-                        Text(viewModel.formatPrice(escrowAmount, masterCurrency), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                    }
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("Оплата в салоне позже (80%):", style = MaterialTheme.typography.bodySmall)
-                        Text(viewModel.formatPrice(remainingAmount, masterCurrency), style = MaterialTheme.typography.bodySmall)
-                    }
-                }
+                Text("Способ оплаты (без предоплаты онлайн):", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
 
-                HorizontalDivider()
-
-                // Cards Form Mockup
-                Text("Реквизиты банковской карты:", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-
-                OutlinedTextField(
-                    value = cardNo,
-                    onValueChange = { cardNo = it.take(16) },
-                    label = { Text("Номер карты (16 цифр)") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    placeholder = { Text("4276 0000 0000 0000") },
-                    modifier = Modifier.fillMaxWidth().testTag("escrow_card_number")
-                )
-
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    OutlinedTextField(
-                        value = expDate,
-                        onValueChange = { expDate = it.take(5) },
-                        label = { Text("Срок (ММ/ГГ)") },
-                        placeholder = { Text("12/28") },
-                        modifier = Modifier.weight(1f).testTag("escrow_card_expiry")
-                    )
-                    OutlinedTextField(
-                        value = cvc,
-                        onValueChange = { cvc = it.take(3) },
-                        label = { Text("CVC") },
-                        placeholder = { Text("123") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.weight(1f).testTag("escrow_card_cvc")
-                    )
-                }
-
-                // Trust Badges row
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("🔒 SSL Secured", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("🛡️ Certified Escrow", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-                    Text(if (onboardingLanguage == "ru") "⭐️ Знак доверия NailiX" else "⭐️ Nailix Trust Seal", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.tertiary)
-                }
-
-                // Submit
-                if (isProcessing) {
-                    Box(modifier = Modifier.fillMaxWidth().padding(8.dp), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator()
-                    }
-                } else {
-                    Button(
-                        onClick = {
-                            if (cardNo.length < 12) {
-                                Toast.makeText(context, "Пожалуйста, введите корректную карту", Toast.LENGTH_SHORT).show()
-                            } else {
-                                isProcessing = true
-                                viewModel.payEscrowAndCompleteBooking()
-                                isProcessing = false
-                                Toast.makeText(context, "Предоплата 20% получена! Запись успешно забронирована 🎉", Toast.LENGTH_LONG).show()
-                                onDismiss()
-                            }
-                        },
+                listOf(
+                    "studio_visit" to "Оплата на месте в студии (наличные / терминал)",
+                    "studio_transfer" to "Перевод мастеру при встрече"
+                ).forEach { (methodKey, label) ->
+                    val isSelected = selectedPaymentMethod == methodKey
+                    Surface(
                         shape = RoundedCornerShape(12.dp),
+                        color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                        border = BorderStroke(
+                            if (isSelected) 1.5.dp else 1.dp,
+                            if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+                        ),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(52.dp)
-                            .testTag("escrow_payment_submit")
+                            .clickable { selectedPaymentMethod = methodKey }
                     ) {
-                        Text("Оплатить ${viewModel.formatPrice(escrowAmount, masterCurrency)} и подтвердить запись", fontWeight = FontWeight.Bold)
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = isSelected,
+                                onClick = { selectedPaymentMethod = methodKey }
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(label, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+                        }
                     }
+                }
 
-                    TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
-                        Text("Вернуться к изменению")
-                    }
+                Button(
+                    onClick = {
+                        viewModel.confirmStudioBooking(selectedPaymentMethod)
+                        Toast.makeText(context, "Запись подтверждена и сохранена! 💅", Toast.LENGTH_SHORT).show()
+                        onDismiss()
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp)
+                        .testTag("confirm_studio_booking_submit")
+                ) {
+                    Text("Подтвердить запись", fontWeight = FontWeight.Bold)
+                }
+
+                TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
+                    Text("Вернуться к изменению")
                 }
             }
         }

@@ -23,7 +23,7 @@ data class UserLoyalty(
     @PrimaryKey val id: Int = 1, // Single-row user state
     val points: Int = 150,       // Welcome bonus points
     val level: String = "Silver", // "Silver", "Gold", "Platinum"
-    val referralCode: String = "VIC-8842-NIL",
+    val referralCode: String = "",
     val friendsReferred: Int = 0,
     val isMailingSubscribed: Boolean = false,
     val subscribedEmail: String? = null,

@@ -1,6 +1,15 @@
 package com.example.ui.screens
 
+import android.graphics.Bitmap
+import android.graphics.ImageDecoder
+import android.net.Uri
+import android.os.Build
+import android.provider.MediaStore
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
@@ -74,7 +83,7 @@ import com.example.ui.viewmodel.MainViewModel
 import com.example.ui.viewmodel.MasterProfile
 import com.example.ui.viewmodel.ClientProfile
 import com.example.ui.viewmodel.AggregatorReview
-import com.example.ui.viewmodel.CustomAd
+import com.example.ai.AiAdviceUiState
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.draw.drawBehind
 import com.example.ui.theme.skinOrnament
@@ -111,7 +120,7 @@ fun DesignsScreenTab(viewModel: MainViewModel) {
             containerColor = Color.Transparent,
             contentColor = MaterialTheme.colorScheme.primary,
             indicator = { tabPositions ->
-                TabRowDefaults.Indicator(
+                TabRowDefaults.SecondaryIndicator(
                     modifier = Modifier.tabIndicatorOffset(tabPositions[selectedSubTab]),
                     color = MaterialTheme.colorScheme.primary
                 )
@@ -229,6 +238,196 @@ fun DesignsScreenTab(viewModel: MainViewModel) {
                                     label = { Text(localizedPal) },
                                     modifier = Modifier.testTag("filter_pal_$pal")
                                 )
+                            }
+                        }
+                    }
+                    // AI Nail Stylist (Firebase AI Logic / Gemini)
+                    val aiAdviceState by viewModel.aiAdviceState.collectAsStateWithLifecycle()
+                    var aiOccasion by remember { mutableStateOf("") }
+                    var showAiPanel by remember { mutableStateOf(false) }
+                    var selectedVisionBitmap by remember { mutableStateOf<Bitmap?>(null) }
+                    val context = LocalContext.current
+
+                    val visionPhotoPicker = rememberLauncherForActivityResult(
+                        contract = ActivityResultContracts.PickVisualMedia()
+                    ) { uri: Uri? ->
+                        if (uri != null) {
+                            val loadedBitmap = runCatching {
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                                    val src = ImageDecoder.createSource(context.contentResolver, uri)
+                                    ImageDecoder.decodeBitmap(src) { decoder, _, _ ->
+                                        decoder.isMutableRequired = false
+                                    }
+                                } else {
+                                    @Suppress("DEPRECATION")
+                                    MediaStore.Images.Media.getBitmap(context.contentResolver, uri)
+                                }
+                            }.getOrNull()
+                            if (loadedBitmap != null) {
+                                selectedVisionBitmap = loadedBitmap
+                            } else {
+                                Toast.makeText(context, "Не удалось прочитать фото для AI анализа", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f))
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .defaultMinSize(minHeight = 48.dp)
+                                    .clickable { showAiPanel = !showAiPanel },
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "✨ AI-стилист NailiX (Gemini)",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                                Icon(
+                                    imageVector = if (showAiPanel) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                    contentDescription = "Развернуть AI-стилиста",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+
+                            AnimatedVisibility(visible = showAiPanel) {
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    OutlinedTextField(
+                                        value = aiOccasion,
+                                        onValueChange = { aiOccasion = it },
+                                        label = { Text("Событие или образ (напр. свадьба, отпуск)") },
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth().testTag("ai_stylist_occasion_input"),
+                                        shape = RoundedCornerShape(10.dp)
+                                    )
+
+                                    selectedVisionBitmap?.let { bmp ->
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                        ) {
+                                            Image(
+                                                bitmap = bmp.asImageBitmap(),
+                                                contentDescription = "Выбранное фото для AI Vision",
+                                                modifier = Modifier
+                                                    .size(64.dp)
+                                                    .clip(RoundedCornerShape(10.dp)),
+                                                contentScale = ContentScale.Crop
+                                            )
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = "Фото готово для Gemini Vision",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                                Text(
+                                                    text = "Нажмите «Анализ фото с Gemini»",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                            IconButton(
+                                                onClick = { selectedVisionBitmap = null },
+                                                modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
+                                            ) {
+                                                Icon(Icons.Default.Close, contentDescription = "Убрать фото")
+                                            }
+                                        }
+                                    }
+
+                                    OutlinedButton(
+                                        onClick = {
+                                            visionPhotoPicker.launch(
+                                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                            )
+                                        },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .defaultMinSize(minHeight = 48.dp)
+                                            .testTag("ai_vision_pick_photo_btn"),
+                                        shape = RoundedCornerShape(10.dp)
+                                    ) {
+                                        Icon(Icons.Default.AddPhotoAlternate, contentDescription = null, modifier = Modifier.size(18.dp))
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("Фото для AI Vision 📷", fontWeight = FontWeight.Bold)
+                                    }
+
+                                    Button(
+                                        onClick = {
+                                            val bmp = selectedVisionBitmap
+                                            if (bmp != null) {
+                                                viewModel.requestAiVisionPhotoAdvice(bmp, aiOccasion)
+                                            } else {
+                                                viewModel.requestAiStylistAdvice(
+                                                    occasion = aiOccasion,
+                                                    preferredLength = lengthFilter ?: "Любая",
+                                                    preferredShape = shapeFilter ?: "Любая",
+                                                    preferredPalette = paletteFilter ?: "Любая"
+                                                )
+                                            }
+                                        },
+                                        enabled = aiAdviceState !is AiAdviceUiState.Loading,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .defaultMinSize(minHeight = 48.dp)
+                                            .testTag("ai_stylist_ask_btn"),
+                                        shape = RoundedCornerShape(10.dp)
+                                    ) {
+                                        if (aiAdviceState is AiAdviceUiState.Loading) {
+                                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text("Анализ с Gemini...")
+                                        } else {
+                                            Text(
+                                                text = if (selectedVisionBitmap != null) "Анализ фото с Gemini" else "Подобрать идею с Gemini",
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+
+                                    when (val state = aiAdviceState) {
+                                        is AiAdviceUiState.Success -> {
+                                            Surface(
+                                                shape = RoundedCornerShape(10.dp),
+                                                color = MaterialTheme.colorScheme.surface
+                                            ) {
+                                                Text(
+                                                    text = state.adviceText,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    modifier = Modifier.padding(10.dp)
+                                                )
+                                            }
+                                        }
+                                        is AiAdviceUiState.Error -> {
+                                            Surface(
+                                                shape = RoundedCornerShape(10.dp),
+                                                color = MaterialTheme.colorScheme.errorContainer
+                                            ) {
+                                                Text(
+                                                    text = state.message,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                                    modifier = Modifier.padding(10.dp)
+                                                )
+                                            }
+                                        }
+                                        else -> {}
+                                    }
+                                }
                             }
                         }
                     }

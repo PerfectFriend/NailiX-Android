@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<resources>
+    <string name="firestore_database_id" translatable="false">ai-studio-android-victoria-3277c870-e266-464c-9e44-de82742cbab0</string>
+    <string name="recaptcha_site_key" translatable="false">6LfMiiouAAAAADRQ_FPEWsEr9pTdclY8gh-Trr5f</string>
+</resources>
